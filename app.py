@@ -6,751 +6,1202 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 from datetime import datetime, timedelta
+from PIL import Image
+import json
+import io
+import time
+import warnings
+import html as _html  # ← for safe escaping of dynamic values into HTML
 
+# ══════════════════════════════════════════════════════════════════════
+# HEIC SUPPORT
+# ══════════════════════════════════════════════════════════════════════
+_HEIC_OK  = False
+_HEIC_ERR = ""
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    _HEIC_OK = True
+except ImportError:
+    _HEIC_ERR = "pillow-heif not installed.\nFix: pip install pillow-heif → restart Streamlit."
+except Exception as _e:
+    _HEIC_ERR = f"pillow-heif registration failed: {_e}"
+
+# ── ctypes libheif fallback ────────────────────────────────────────
+_LIBHEIF_OK = False
+try:
+    import ctypes, ctypes.util
+    _libheif = ctypes.CDLL("libheif.so.1")
+    _libheif.heif_context_alloc.restype            = ctypes.c_void_p
+    _libheif.heif_context_get_primary_image_handle.restype = ctypes.c_int
+    _libheif.heif_decode_image.restype             = ctypes.c_int
+    _libheif.heif_image_get_plane_readonly.restype = ctypes.c_void_p
+    _libheif.heif_image_handle_get_width.restype   = ctypes.c_int
+    _libheif.heif_image_handle_get_height.restype  = ctypes.c_int
+    _LIBHEIF_OK = True
+except Exception:
+    pass
+
+def _open_heic_ctypes(raw_bytes: bytes):
+    import ctypes, tempfile, os
+    tmp = tempfile.NamedTemporaryFile(suffix=".heic", delete=False)
+    tmp.write(raw_bytes); tmp.close()
+    try:
+        ctx    = ctypes.c_void_p(_libheif.heif_context_alloc())
+        _libheif.heif_context_read_from_file(ctx, tmp.name.encode(), None)
+        handle = ctypes.c_void_p()
+        _libheif.heif_context_get_primary_image_handle(ctx, ctypes.byref(handle))
+        w      = _libheif.heif_image_handle_get_width(handle)
+        h      = _libheif.heif_image_handle_get_height(handle)
+        img_ptr= ctypes.c_void_p()
+        _libheif.heif_decode_image(handle, ctypes.byref(img_ptr), 1, 10, None)
+        stride = ctypes.c_int(0)
+        plane  = _libheif.heif_image_get_plane_readonly(img_ptr, 10, ctypes.byref(stride))
+        if not plane or stride.value == 0:
+            raise RuntimeError("libheif plane decode returned null")
+        raw = (ctypes.c_uint8 * (stride.value * h)).from_address(plane)
+        pil  = Image.frombuffer("RGB", (w, h), bytes(raw), "raw", "RGB", stride.value, 1)
+        _libheif.heif_context_free(ctx)
+        return pil.copy()
+    finally:
+        os.unlink(tmp.name)
+
+
+def open_image_safe(raw_bytes: bytes, filename: str = "") -> tuple:
+    fname   = filename.lower()
+    is_heic = fname.endswith((".heic", ".heif"))
+    if is_heic and _HEIC_OK:
+        try:
+            return Image.open(io.BytesIO(raw_bytes)).convert("RGB"), None
+        except Exception:
+            pass
+    if is_heic and _LIBHEIF_OK:
+        try:
+            return _open_heic_ctypes(raw_bytes), None
+        except Exception as e:
+            return None, f"libheif decode failed: {e}"
+    if is_heic:
+        return None, _HEIC_ERR or "No HEIC decoder available."
+    try:
+        img = Image.open(io.BytesIO(raw_bytes))
+        return img.convert("RGB"), None
+    except Exception as exc:
+        return None, str(exc)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# LOCAL IMPORTS
+# ══════════════════════════════════════════════════════════════════════
 from real_data import get_blocks_df, HILSA_STATS, BLOCK_CENSUS, JJM_COVERAGE, MGNREGA_DATA
 from classifier import classify_complaint, SCHEMA
-from image_loader import hero_css_bg
 
-try:
-    from streamlit_plotly_events import plotly_events
-    HAS_EVENTS = True
-except ImportError:
-    HAS_EVENTS = False
+# ══════════════════════════════════════════════════════════════════════
+# PAGE CONFIG
+# ══════════════════════════════════════════════════════════════════════
+st.set_page_config(
+    page_title="NGIS · Nalanda",
+    page_icon="🏛️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# ── Page config ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="NGIS · Nalanda", page_icon="🏛️",
-                   layout="wide", initial_sidebar_state="expanded")
+# ══════════════════════════════════════════════════════════════════════
+# GEMINI
+# ══════════════════════════════════════════════════════════════════════
+_GEMINI_CHAIN = ["gemini-2.5-flash","gemini-2.0-flash","gemini-2.0-flash-lite","gemini-1.5-pro"]
+_RETRY_ERRORS = ("404","not found","deprecated","unavailable","429","quota","exceeded","resource_exhausted")
+_SKIP_ERRORS  = ("permission_denied","invalid_api_key","api_key_invalid","auth","invalid argument")
 
-# ── Chart theme (Updated to Jan Samadhan Palette) ──────────────────────────────
-TERRACOTTA = "#D98A73"  # Pastel Terracotta
-SAGE       = "#9CAF88"  # Soft Sage Green
-RED        = "#C67D6F"  # High Priority: Dusty Coral / Muted Terracotta
-AMBER      = "#D1AE6C"  # Medium Priority: Muted Sand / Ochre
-GREEN      = "#8EA38B"  # Low Priority: Earthy Sage
-BLUE       = "#ABC4D8"  # Pale Sky Blue
-CREAM      = "#F8F5F0"  # Cream Official (Background)
-WHITE      = "#FFFFFF"  # Cards / Handpaper
-MUTED      = "#6B7280"  # Gray for secondary text
-NAVY       = "#1E3A8A"  # Deep blue for official headers
-BORDER     = "#E5E7EB"  # Light border for structure
+def _is_retryable(err_str):
+    s = err_str.lower()
+    if any(x in s for x in _SKIP_ERRORS): return False
+    return any(x in s for x in _RETRY_ERRORS)
 
-# ── FIX: Aliases to prevent breaking existing chart functions ──────────────────
-GOLD   = AMBER       
-GOLD_L = "#E8D898"   
-SAGE_L = "#C2D2B3"
+def _is_quota(err_str):
+    s = err_str.lower()
+    return any(x in s for x in ("429","quota","exceeded","resource_exhausted"))
 
-def ct(fig, title="", h=None, secondary_axes=False):
-    """Apply consistent light chart theme."""
+def init_gemini(api_key):
+    if not api_key or api_key.strip() == "": return None, None
+    key = api_key.strip()
+    try:
+        from google import genai as _gai
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            client = _gai.Client(api_key=key)
+        active = _GEMINI_CHAIN[1]
+        try:
+            available = [m.name.split("/")[-1] for m in client.models.list()
+                         if "generateContent" in (m.supported_actions or [])]
+            for pref in _GEMINI_CHAIN:
+                if pref in available: active = pref; break
+        except Exception: pass
+        st.session_state["_gemini_active"] = active
+        return client, "new"
+    except ImportError: pass
+    try:
+        import google.generativeai as _old
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _old.configure(api_key=key)
+        st.session_state["_gemini_active"] = _GEMINI_CHAIN[1]
+        return _old, "legacy"
+    except Exception: return None, None
+
+def run_gemini_ocr(client_tuple, image_bytes):
+    client, sdk_type = (client_tuple if isinstance(client_tuple, tuple) else (client_tuple, "legacy"))
+    active_model = st.session_state.get("_gemini_active", _GEMINI_CHAIN[1])
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        buf = io.BytesIO(); img.save(buf, format="JPEG", quality=90)
+        jpeg_bytes = buf.getvalue()
+    except Exception as e: return {"error": f"Image preprocessing failed: {e}"}
+
+    prompt = """You are an OCR assistant for Bihar government district administration.
+Read this handwritten Hindi grievance letter EXACTLY as written.
+STRICT RULES:
+1. Transcribe ONLY what is actually written. Do NOT infer or add information.
+2. If a word is unclear write [अस्पष्ट] rather than guessing.
+3. Preserve original Hindi text exactly.
+Return ONLY a valid JSON object — no markdown, no backticks:
+{
+  "transcription": "Complete Hindi text exactly as written",
+  "complainant_name": "Name of person who signed (or Unknown)",
+  "village": "Village/Gram name mentioned (or Unknown)",
+  "block": "Block/Thana/Panchayat mentioned (or Unknown)",
+  "date_filed": "Date written in letter (or Unknown)",
+  "issue_summary": "One sentence summary of core problem in English"
+}"""
+
+    models_to_try = [active_model] + [m for m in _GEMINI_CHAIN if m != active_model]
+    _last_err = None; quota_hit = False
+
+    if sdk_type == "new":
+        try:
+            from google.genai import types as _types
+        except ImportError:
+            from google import genai as _gai_mod; _types = _gai_mod.types
+        image_part = _types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg")
+        for model_name in models_to_try:
+            try:
+                response = client.models.generate_content(model=model_name, contents=[prompt, image_part])
+                raw = response.text.strip().replace("```json","").replace("```","").strip()
+                try: return json.loads(raw)
+                except json.JSONDecodeError:
+                    return {"transcription":response.text,"complainant_name":"Unknown","village":"Unknown",
+                            "block":"Unknown","date_filed":datetime.now().strftime("%Y-%m-%d"),
+                            "issue_summary":"Could not parse JSON"}
+            except Exception as _e:
+                _s = str(_e); _last_err = _s
+                if _is_quota(_s): quota_hit = True; time.sleep(5); continue
+                if _is_retryable(_s): continue
+                return {"error": f"Fatal Gemini error: {_s}"}
+        if quota_hit:
+            return {"error": "🚫 Gemini free-tier quota exhausted.\n\nFix: Generate a new API key at https://aistudio.google.com/apikey\n\nLast error: " + str(_last_err)}
+        return {"error": f"All models exhausted. Last error: {_last_err}"}
+
+    import google.generativeai as _old_genai
+    for model_name in models_to_try:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                m = _old_genai.GenerativeModel(model_name)
+                response = m.generate_content([prompt, img])
+            raw = response.text.strip().replace("```json","").replace("```","").strip()
+            try: return json.loads(raw)
+            except json.JSONDecodeError:
+                return {"transcription":response.text,"complainant_name":"Unknown","village":"Unknown",
+                        "block":"Unknown","date_filed":datetime.now().strftime("%Y-%m-%d"),
+                        "issue_summary":"Could not parse JSON"}
+        except Exception as _e:
+            _s = str(_e); _last_err = _s
+            if _is_quota(_s): quota_hit = True; time.sleep(5); continue
+            if _is_retryable(_s): continue
+            return {"error": f"Fatal Gemini error: {_s}"}
+    if quota_hit:
+        return {"error": "🚫 Quota exhausted.\n\nGet new key: https://aistudio.google.com/apikey\n\nLast error: " + str(_last_err)}
+    return {"error": f"All models exhausted. Last: {_last_err}"}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# THEME
+# ══════════════════════════════════════════════════════════════════════
+NAVY   = "#1B3764"
+SAFF   = "#E8751A"
+GREEN  = "#1A7A3C"
+RED    = "#C02020"
+AMBER  = "#C8820A"
+TEAL   = "#1B6B7B"
+MUTED  = "#5C5048"
+LGRID  = "#D4C9B8"
+LBG    = "#F5F3EE"
+WHITE  = "#FFFFFF"
+TXT    = "#1A1A2E"
+
+def ct(fig, title="", h=None):
     kw = dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=MUTED, family="'Plus Jakarta Sans', sans-serif", size=11),
-        title=dict(text=title, font=dict(family="'Instrument Serif', serif", size=18, color=NAVY),
+        font=dict(color=MUTED, family="'Noto Sans', sans-serif", size=11),
+        title=dict(text=title, font=dict(family="'Noto Serif', serif", size=14, color=TXT),
                    x=0, xanchor="left") if title else {},
-        xaxis=dict(gridcolor=BORDER, linecolor=BORDER, tickcolor=BORDER,
-                   tickfont=dict(size=10, color=MUTED), title_font=dict(size=11, color=MUTED)),
-        yaxis=dict(gridcolor=BORDER, linecolor=BORDER, tickcolor=BORDER,
-                   tickfont=dict(size=10, color=MUTED), title_font=dict(size=11, color=MUTED)),
+        xaxis=dict(gridcolor=LGRID, linecolor=LGRID, tickcolor=MUTED, tickfont=dict(size=10)),
+        yaxis=dict(gridcolor=LGRID, linecolor=LGRID, tickcolor=MUTED, tickfont=dict(size=10)),
         margin=dict(t=46 if title else 14, b=14, l=8, r=8),
-        legend=dict(bgcolor="rgba(255,255,255,0.8)", bordercolor=BORDER, borderwidth=1,
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(0,0,0,0)",
                     font=dict(color=MUTED, size=11), orientation="h",
                     yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hoverlabel=dict(bgcolor=WHITE, bordercolor=BORDER,
-                        font=dict(color=NAVY, family="'Plus Jakarta Sans'")),
+        hoverlabel=dict(bgcolor=WHITE, bordercolor=LGRID, font=dict(color=TXT)),
     )
-    if h:
-        kw["height"] = h
+    if h: kw["height"] = h
     fig.update_layout(**kw)
     return fig
 
-# ── Sparkline SVG helper ───────────────────────────────────────────────────────
-def spark(values, color=GOLD, w=80, h=28):
-    if len(values) < 2 or max(values) == min(values):
-        return ""
-    mn, mx = min(values), max(values)
-    pts = " ".join(
-        f"{i/(len(values)-1)*w:.1f},{h-((v-mn)/(mx-mn))*h:.1f}"
-        for i, v in enumerate(values)
-    )
-    return (f'<svg width="{w}" height="{h}" style="overflow:visible;vertical-align:middle">'
-            f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.8" '
-            f'stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
-
-# ── KPI card helper ────────────────────────────────────────────────────────────
-def kpi(label, value, delta="", delta_dir="flat", sparkvals=None, accent=GOLD):
-    sp = spark(sparkvals) if sparkvals else ""
-    delta_color = GREEN if delta_dir=="up" else RED if delta_dir=="down" else "#5C4F42"
-    arrow = "↑ " if delta_dir=="up" else "↓ " if delta_dir=="down" else ""
-    return f"""
-    <div class="kpi-card" style="border-top-color:{accent}">
-      <div class="kpi-label">{label}</div>
-      <div class="kpi-value">{value}</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
-        <div class="kpi-delta" style="color:{delta_color}">{arrow}{delta}</div>{sp}
-      </div>
-    </div>"""
-
-
-# ── CSS ────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# CSS  (unchanged from document 7)
+# ══════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&family=Noto+Serif:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap');
 
 *,*::before,*::after{box-sizing:border-box}
 footer{visibility:hidden}header{visibility:hidden}.stDeployButton{display:none}
 
-/* Main Background - Cream Official */
-.stApp { background: #F8F5F0 !important; }
-.main .block-container { padding: 0 0 60px 0 !important; max-width: 100% !important; }
+.stApp{background:#F5F3EE!important}
+.main .block-container{padding:0 0 60px 0!important;max-width:100%!important}
+section[data-testid="stSidebar"]{background:#1B3764!important;border-right:2px solid #142B50!important}
+section[data-testid="stSidebar"] *{color:#C8D8F0!important}
+h1,h2,h3{font-family:'Noto Serif',serif!important;color:#1B3764!important}
 
-/* Sidebar */
-section[data-testid="stSidebar"] { background: #FFFFFF !important; border-right: 1px solid #E5E7EB !important; }
-section[data-testid="stSidebar"] * { color: #4B5563 !important; }
-.sidebar-brand { padding: 22px 18px 16px; border-bottom: 1px solid #E5E7EB; }
-.sidebar-brand .wordmark { font-family: 'Instrument Serif', serif; font-size: 26px; color: #1E3A8A !important; letter-spacing: 0.02em; }
-.sidebar-brand .sub { font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase; color: #D98A73 !important; margin-top: 2px; }
-.sidebar-brand .loc { font-size: 11px; color: #6B7280 !important; margin-top: 4px; font-family: 'Fira Code', monospace; }
+.tricolor-strip{height:5px;background:linear-gradient(90deg,#FF9933 33%,#FFFFFF 33%,#FFFFFF 66%,#138808 66%);width:100%}
 
-/* Hero Banner */
-.ngis-hero { position: relative; width: 100%; height: 180px; overflow: hidden; border-radius: 0 0 12px 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-.ngis-hero-bg { width: 100%; height: 100%; background-size: cover; background-position: center; filter: saturate(0.8) brightness(0.95); }
-.ngis-hero-over { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(248, 245, 240, 0.95) 0%, rgba(248, 245, 240, 0.7) 50%, rgba(248, 245, 240, 0.1) 100%); display: flex; align-items: flex-end; padding: 26px 52px; }
-.ngis-hero h1 { font-family: 'Instrument Serif', serif !important; font-size: 2.8rem !important; color: #1E3A8A !important; margin: 0 0 4px !important; line-height: 1.1 !important; font-weight: 600 !important; }
-.ngis-hero p { color: #4B5563; font-size: 13px; margin: 0; letter-spacing: 0.5px; font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 500; }
+.ngis-hero{position:relative;width:100%;background:#1B3764;overflow:hidden;padding:0}
+.gov-header-top{background:#1B3764;padding:10px 52px;display:flex;align-items:center;
+  gap:16px;border-bottom:1px solid rgba(255,255,255,.12)}
+.gov-emblem{width:44px;height:44px;background:rgba(255,255,255,.15);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
+.gov-title-hi{font-family:'Noto Sans Devanagari','Noto Serif',serif;font-size:13px;
+  font-weight:600;color:#FFFFFF;letter-spacing:.3px;line-height:1.3}
+.gov-title-en{font-family:'Noto Sans',sans-serif;font-size:11px;
+  color:rgba(255,255,255,.65);letter-spacing:.5px;margin-top:1px}
+.gov-page-bar{background:#142B50;padding:8px 52px;display:flex;align-items:center;gap:12px}
+.gov-page-title{font-family:'Noto Serif',serif;font-size:16px;font-weight:600;color:#FFFFFF}
+.gov-page-sub{font-family:'Noto Sans',sans-serif;font-size:11px;
+  color:rgba(255,255,255,.55);margin-left:auto;letter-spacing:.3px}
 
-.ngis-body { padding: 32px 52px 0; }
+.ngis-body{padding:24px 52px 0}
+.ngis-hr{height:1px;background:#D4C9B8;margin:20px 0}
 
-/* Filter bar */
-.filter-bar { background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 6px; padding: 12px 18px; margin-bottom: 24px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: #6B7280; font-family: 'Plus Jakarta Sans', sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.kpi-card{background:#FFFFFF;border:1px solid #D4C9B8;border-left:4px solid #1B3764;
+  border-radius:2px;padding:14px 16px 12px;transition:box-shadow .2s}
+.kpi-card:hover{box-shadow:0 2px 8px rgba(27,55,100,.12)}
+.kpi-card.k-red{border-left-color:#C02020}
+.kpi-card.k-green{border-left-color:#1A7A3C}
+.kpi-card.k-amb{border-left-color:#E8751A}
+.kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:1.8px;color:#8A7A6A;
+  font-weight:600;font-family:'Noto Sans',sans-serif;margin-bottom:8px}
+.kpi-value{font-size:32px;font-weight:600;color:#1B3764;line-height:1;
+  font-family:'Noto Sans',sans-serif;margin-bottom:5px}
+.kpi-delta{font-size:11px;font-family:'Fira Code',monospace;color:#8A7A6A}
+.kpi-delta.up{color:#1A7A3C}.kpi-delta.down{color:#C02020}
 
-/* KPI grid (Added Handloom top border & depth) */
-.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
-.kpi-card { background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 22px 20px 16px; position: relative; box-shadow: 0 4px 12px rgba(0,0,0,0.04); overflow: hidden; transition: all 0.2s; }
-.kpi-card:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(0,0,0,0.08); }
-.kpi-card::before { 
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 5px; 
-    /* Bihar Handloom Fabric Pattern from Mood Board */
-    background: linear-gradient(90deg, #D98A73 25%, #ABC4D8 25%, #ABC4D8 50%, #9CAF88 50%, #9CAF88 75%, #D1AE6C 75%); 
-}
-.kpi-label { font-size: 10px; color: #6B7280; text-transform: uppercase; letter-spacing: 1.5px; font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700; margin-bottom: 8px; }
-.kpi-value { font-size: 36px; font-weight: 500; color: #1E3A8A; font-family: 'Plus Jakarta Sans', sans-serif; line-height: 1; }
-.kpi-delta { font-size: 11px; font-family: 'Fira Code', monospace; font-weight: 500; }
+.sec-label{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#8A7A6A;
+  font-weight:600;font-family:'Noto Sans',sans-serif;
+  padding-bottom:8px;border-bottom:2px solid #1B3764;margin-bottom:14px;
+  display:flex;align-items:center;gap:6px}
 
-/* Section label (Added official Navy styling) */
-.sec-label { font-size: 12px; color: #1E3A8A; text-transform: uppercase; letter-spacing: 2px; font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700; padding-bottom: 8px; border-bottom: 2px solid #ABC4D8; margin-bottom: 20px; display: inline-block;}
+.reg-wrap{overflow-x:auto;border:1px solid #D4C9B8;border-radius:2px}
+.reg-table{width:100%;border-collapse:collapse;font-size:12px;font-family:'Noto Sans',sans-serif}
+.reg-table thead tr{background:#1B3764}
+.reg-table thead th{padding:8px 10px;text-align:left;color:#FFFFFF;
+  border:1px solid #142B50;font-size:10px;font-weight:600;letter-spacing:.5px;white-space:nowrap}
+.reg-table thead th .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:11px;font-weight:600}
+.reg-table thead th .en{display:block;font-size:9px;opacity:.7;letter-spacing:.5px;margin-top:1px}
+.reg-table tbody tr{border-bottom:1px solid #E8E0D4}
+.reg-table tbody tr:nth-child(odd) td{background:#FFFFFF}
+.reg-table tbody tr:nth-child(even) td{background:#F5F3EE}
+.reg-table tbody tr:hover td{background:#EBF0FA}
+.reg-table tbody td{padding:8px 10px;border-right:1px solid #E8E0D4;
+  vertical-align:middle;color:#1A1A2E}
+.reg-table tbody td:last-child{border-right:none}
+.p-high{color:#C02020;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
+.p-med{color:#C8820A;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
+.p-low{color:#1A7A3C;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
+.age-red{color:#C02020;font-family:'Fira Code',monospace}
+.age-amb{color:#C8820A;font-family:'Fira Code',monospace}
+.age-ok{color:#8A7A6A;font-family:'Fira Code',monospace}
+.src-badge{background:#EBF0FA;color:#1B3764;border:1px solid #B8CCE8;
+  border-radius:2px;padding:1px 6px;font-size:9px;font-family:'Fira Code',monospace;white-space:nowrap}
 
-/* Divider (Cultural stitching pattern instead of a plain line) */
-.ngis-hr { height: 4px; background-color: transparent; background-image: repeating-linear-gradient(45deg, #D98A73, #D98A73 2px, transparent 2px, transparent 8px); margin: 36px 0; border: none; opacity: 0.5; }
+.reg-ticket{border:2px solid #1B3764;border-radius:2px;overflow:hidden;
+  font-family:'Noto Sans',sans-serif}
+.reg-ticket-header{background:#1B3764;padding:12px 16px;text-align:center}
+.reg-ticket-h1{font-family:'Noto Sans Devanagari','Noto Serif',serif;
+  font-size:14px;font-weight:700;color:#FFFFFF;letter-spacing:.3px}
+.reg-ticket-h2{color:rgba(255,255,255,.65);font-size:11px;margin-top:2px;letter-spacing:.5px}
+.reg-ticket-h3{color:#F5C842;font-size:12px;font-weight:600;
+  margin-top:5px;font-family:'Noto Sans Devanagari',sans-serif}
+.reg-ticket table{width:100%;border-collapse:collapse}
+.reg-ticket .lbl{background:#EBF0FA;border:1px solid #D4C9B8;padding:7px 10px;
+  width:130px;font-size:10px;color:#1B3764;font-weight:600;
+  text-transform:uppercase;letter-spacing:.5px;vertical-align:top}
+.reg-ticket .lbl .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:11px;font-weight:600;text-transform:none;letter-spacing:0}
+.reg-ticket .lbl .en{display:block;font-size:9px;opacity:.65;margin-top:1px}
+.reg-ticket .val{border:1px solid #D4C9B8;padding:7px 10px;
+  font-size:12px;color:#1A1A2E;vertical-align:top;line-height:1.6}
+.reg-ticket .val.mono{font-family:'Fira Code',monospace}
+.reg-ticket .section-hdr{background:#1B3764;padding:5px 10px;
+  font-size:10px;font-weight:600;color:#FFFFFF;
+  text-transform:uppercase;letter-spacing:1px;font-family:'Noto Sans',sans-serif}
+.prashan-row{border:1px solid #D4C9B8;padding:8px 10px;
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.prashan-box{border:1px solid #1B3764;border-radius:1px;padding:4px 10px;
+  font-size:10px;font-weight:600;color:#1B3764;background:#EBF0FA;
+  font-family:'Noto Sans',sans-serif;letter-spacing:.3px}
+.prashan-box.highlight{background:#1B3764;color:#FFFFFF}
+.pri-stamp{display:inline-block;border:2px solid;padding:3px 12px;border-radius:1px;
+  font-size:11px;font-weight:700;font-family:'Noto Sans',sans-serif;
+  letter-spacing:1px;text-transform:uppercase}
+.pri-high{border-color:#C02020;color:#C02020;background:#FEF0F0}
+.pri-normal{border-color:#1A7A3C;color:#1A7A3C;background:#EFF7F1}
 
-/* System Brief Custom Box */
-.sys-brief { background: #FFFFFF; border: 1px solid #E5E7EB; border-left: 6px solid #1E3A8A; border-radius: 8px; padding: 18px 22px; margin-bottom: 24px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 14px; color: #4B5563; line-height: 1.7; box-shadow: 0 4px 12px rgba(0,0,0,0.04); position: relative; }
-.sys-brief::after { content: '🏛️'; position: absolute; right: 24px; top: 50%; transform: translateY(-50%); font-size: 40px; opacity: 0.05; }
+.alert-high{background:#FEF0F0;border:1px solid #E8AAAA;border-left:4px solid #C02020;
+  border-radius:2px;padding:10px 14px;margin-top:8px;
+  font-size:12px;font-family:'Fira Code',monospace;color:#8B1A1A;white-space:pre-wrap}
+.alert-normal{background:#EFF7F1;border:1px solid #A8D8B5;border-left:4px solid #1A7A3C;
+  border-radius:2px;padding:10px 14px;margin-top:8px;
+  font-size:12px;font-family:'Fira Code',monospace;color:#1A4A2A}
+.alert-warn{background:#FEF8EC;border:1px solid #E8D090;border-left:4px solid #C8820A;
+  border-radius:2px;padding:10px 14px;margin-top:8px;
+  font-size:12px;font-family:'Fira Code',monospace;color:#7A4A0A;white-space:pre-wrap}
+.processing-note{background:#F5F3EE;border:1px solid #D4C9B8;border-radius:2px;
+  padding:10px 12px;font-size:10px;font-family:'Fira Code',monospace;
+  color:#8A7A6A;margin-top:10px;line-height:1.8}
 
-/* Insight / Alert blocks */
-.ins-block { background: #FFFFFF; border: 1px solid #E5E7EB; border-left: 4px solid #8EA38B; border-radius: 6px; padding: 14px 18px; margin-bottom: 10px; font-size: 13.5px; line-height: 1.75; color: #4B5563; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
-.alrt-block { background: rgba(198, 125, 111, 0.08); border: 1px solid rgba(198, 125, 111, 0.2); border-left: 4px solid #C67D6F; border-radius: 6px; padding: 11px 16px; margin-bottom: 10px; font-size: 12px; font-family: 'Fira Code', monospace; color: #A05245; line-height: 1.6; }
-.good-block { background: rgba(142, 163, 139, 0.1); border: 1px solid rgba(142, 163, 139, 0.25); border-left: 4px solid #8EA38B; border-radius: 6px; padding: 11px 16px; margin-bottom: 10px; font-size: 12px; font-family: 'Fira Code', monospace; color: #4A6348; line-height: 1.6; }
-            
-/* Scheme tags */
-.tag { display: inline-block; font-size: 11px; font-family: 'Plus Jakarta Sans', sans-serif; padding: 3px 10px; border-radius: 4px; margin: 3px; font-weight: 500; }
-.tag-g { background: rgba(217, 138, 115, 0.1); border: 1px solid rgba(217, 138, 115, 0.3); color: #B95B40; }
-.tag-t { background: rgba(156, 175, 136, 0.1); border: 1px solid rgba(156, 175, 136, 0.3); color: #587340; }
+.brief-card{background:#FFFFFF;border:1px solid #D4C9B8;border-left:4px solid #1B3764;
+  border-radius:2px;padding:12px 16px;margin-bottom:18px;
+  font-family:'Noto Sans',sans-serif;font-size:13px;color:#1A1A2E;line-height:1.7}
 
-/* Jurisdiction */
-.jur { background: #F8F5F0; border: 1px solid #E5E7EB; border-radius: 4px; padding: 10px 14px; font-family: 'Fira Code', monospace; font-size: 11px; color: #D98A73; line-height: 1.8; }
+.scheme-entry{background:#FFFFFF;border:1px solid #D4C9B8;border-radius:2px;
+  overflow:hidden;margin-bottom:14px}
+.scheme-entry-header{background:#1B3764;padding:8px 12px;
+  display:flex;align-items:center;gap:8px}
+.scheme-central-tag{background:#EBF0FA;border:1px solid #B8CCE8;border-radius:2px;
+  padding:5px 9px;font-size:11px;color:#1B3764;margin-bottom:4px}
+.scheme-state-tag{background:#FEF3EB;border:1px solid #F5C89A;border-radius:2px;
+  padding:5px 9px;font-size:11px;color:#7A3A0A;margin-bottom:4px}
+.jur-chain-light{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.jur-step-light{background:#EBF0FA;color:#1B3764;padding:3px 8px;border-radius:2px;
+  font-size:10px;font-weight:600;font-family:'Fira Code',monospace;border:1px solid #B8CCE8}
 
-/* Ticket result card */
-.ticket-card { background: #FFFFFF; border: 1px solid #E5E7EB; border-top: 3px solid #ABC4D8; border-radius: 8px; padding: 20px 22px; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
-.ticket-id { font-family: 'Instrument Serif', serif; font-size: 28px; color: #1E3A8A; font-weight: 600; }
-.ticket-meta { font-size: 12px; color: #6B7280; margin-top: 4px; font-family: 'Plus Jakarta Sans', sans-serif; }
-
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] { background: transparent !important; border-bottom: 2px solid #E5E7EB !important; gap: 0 !important; }
-.stTabs [data-baseweb="tab"] { color: #6B7280 !important; font-family: 'Plus Jakarta Sans', sans-serif !important; font-size: 13px !important; font-weight: 600 !important; padding: 11px 24px !important; border-bottom: 2px solid transparent !important; transition: color 0.2s !important; }
-.stTabs [aria-selected="true"] { color: #1E3A8A !important; border-bottom-color: #1E3A8A !important; background: transparent !important; }
-
-/* Buttons */
-.stButton>button { background: #1E3A8A !important; color: #FFFFFF !important; font-weight: 600 !important; border-radius: 4px !important; letter-spacing: 0.5px !important; }
-.stButton>button:hover { background: #152C69 !important; border-color: #152C69 !important; }
-
-/* Inputs */
-.stSelectbox>div>div, .stTextArea textarea { background: #FFFFFF !important; border-color: #E5E7EB !important; color: #1F2937 !important; box-shadow: 0 1px 2px rgba(0,0,0,0.02) !important; }
-.stTextArea textarea::placeholder { color: #9CA3AF !important; }
-
-/* Native metrics */
-div[data-testid="metric-container"] { background: #FFFFFF !important; border: 1px solid #E5E7EB !important; border-top: 3px solid #D4AF37 !important; border-radius: 6px !important; padding: 14px 16px !important; box-shadow: 0 2px 6px rgba(0,0,0,0.02); }
-[data-testid="metric-container"] label { color: #6B7280 !important; font-weight: 600 !important; }
-[data-testid="metric-container"] [data-testid="metric-value"] { color: #1F2937 !important; font-weight: 500 !important; }
-
-/* Expander */
-.streamlit-expanderHeader { background: #FFFFFF !important; border: 1px solid #E5E7EB !important; color: #1F2937 !important; font-weight: 600 !important; }
-.streamlit-expanderContent { background: #F8F5F0 !important; border: 1px solid #E5E7EB !important; border-top: none !important; }
-
-/* Image Strip Carousel */
-.img-strip {
-    display: flex;
-    gap: 16px;
-    margin-bottom: 24px;
-    overflow-x: auto;
-    padding-bottom: 12px;
-    scroll-snap-type: x mandatory;
-    scroll-behavior: smooth;
-}
-
-/* Customizing the scrollbar to match your theme */
-.img-strip::-webkit-scrollbar {
-    height: 6px;
-}
-.img-strip::-webkit-scrollbar-track {
-    background: #F8F5F0; 
-    border-radius: 4px;
-}
-.img-strip::-webkit-scrollbar-thumb {
-    background: #ABC4D8; 
-    border-radius: 4px;
-}
-
-/* Giving the empty divs dimensions so the background images appear */
-.img-strip div {
-    flex: 0 0 300px; /* Forces each image card to be exactly 300px wide */
-    height: 180px;   /* Gives the card a height */
-    background-size: cover;
-    background-position: center;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
-    scroll-snap-align: start;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    cursor: pointer;
-}
-
-/* Hover effect for polish */
-.img-strip div:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.1);
-}
+.stTabs [data-baseweb="tab-list"]{background:#FFFFFF!important;
+  border-bottom:2px solid #1B3764!important;gap:0!important}
+.stTabs [data-baseweb="tab"]{color:#8A7A6A!important;font-family:'Noto Sans',sans-serif!important;
+  font-size:13px!important;font-weight:500!important;padding:10px 22px!important;
+  border-bottom:2px solid transparent!important}
+.stTabs [aria-selected="true"]{color:#1B3764!important;border-bottom-color:#1B3764!important;
+  background:transparent!important;font-weight:600!important}
+.stButton>button{background:#1B3764!important;color:#FFFFFF!important;
+  font-weight:600!important;font-family:'Noto Sans',sans-serif!important;
+  border:none!important;border-radius:2px!important;letter-spacing:.3px!important}
+.stButton>button:hover{background:#E8751A!important}
+.stSelectbox>div>div,.stTextArea textarea,.stTextInput input{
+  background:#FFFFFF!important;border-color:#D4C9B8!important;
+  color:#1A1A2E!important;font-family:'Noto Sans',sans-serif!important;
+  font-size:13px!important;border-radius:2px!important}
+div[data-testid="metric-container"]{background:#FFFFFF!important;
+  border:1px solid #D4C9B8!important;border-left:4px solid #1B3764!important;
+  border-radius:2px!important;padding:12px 14px!important}
+[data-testid="metric-container"] label{color:#8A7A6A!important;
+  font-family:'Noto Sans',sans-serif!important;font-size:9px!important;
+  text-transform:uppercase!important;letter-spacing:1.5px!important}
+[data-testid="metric-container"] [data-testid="metric-value"]{
+  color:#1B3764!important;font-weight:600!important}
+.stDataFrame{font-family:'Fira Code',monospace!important;font-size:11px!important}
+.streamlit-expanderHeader{background:#F5F3EE!important;border:1px solid #D4C9B8!important;
+  font-family:'Noto Sans',sans-serif!important;color:#1B3764!important;border-radius:2px!important}
+.streamlit-expanderContent{background:#FFFFFF!important;border:1px solid #D4C9B8!important;
+  border-top:none!important}
+.stSpinner>div{border-color:#1B3764 transparent transparent transparent!important}
+.stRadio label{color:#1A1A2E!important;font-family:'Noto Sans',sans-serif!important}
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Session state ──────────────────────────────────────────────────────────────
-if 'grievances' not in st.session_state:
-    blocks = list(BLOCK_CENSUS.keys())
-    cats   = list(SCHEMA.keys())
-    depts  = [SCHEMA[c]["department"].split("(")[0].strip() for c in cats]
-    n = 90
+# ══════════════════════════════════════════════════════════════════════
+# SESSION STATE
+# ══════════════════════════════════════════════════════════════════════
+if "grievances" not in st.session_state:
+    blocks  = list(BLOCK_CENSUS.keys())
+    cats    = list(SCHEMA.keys())
+    depts   = [SCHEMA[c]["department"].split("(")[0].strip() for c in cats]
+    n       = 90
     np.random.seed(42)
-    dates     = [(datetime.now()-timedelta(days=int(np.random.randint(0,45)))).strftime("%Y-%m-%d") for _ in range(n)]
-    cat_idx   = np.random.choice(len(cats)-1, n)
-    blk_idx   = np.random.choice(len(blocks), n)
-    pris      = np.random.choice(["High","Medium","Low"], n, p=[0.22,0.48,0.30])
-    stats_    = np.random.choice(["Open","In Progress","Resolved"], n, p=[0.50,0.25,0.25])
-    ages      = np.random.randint(1, 35, n)
+    dates   = [(datetime.now()-timedelta(days=int(np.random.randint(0,45)))).strftime("%Y-%m-%d") for _ in range(n)]
+    ci      = np.random.choice(len(cats)-1, n)
+    bi      = np.random.choice(len(blocks), n)
+    pris    = np.random.choice(["High","Medium","Low"], n, p=[0.22,0.48,0.30])
+    stats_  = np.random.choice(["Open","In Progress","Resolved"], n, p=[0.50,0.25,0.25])
+    ages    = np.random.randint(1, 35, n)
     st.session_state.grievances = pd.DataFrame({
         "ID":         [f"NLD-{i+1:03d}" for i in range(n)],
         "Date":       dates,
-        "Category":   [cats[i] for i in cat_idx],
-        "Department": [depts[i] for i in cat_idx],
-        "Block":      [blocks[i] for i in blk_idx],
+        "Category":   [cats[i] for i in ci],
+        "Department": [depts[i] for i in ci],
+        "Block":      [blocks[i] for i in bi],
         "Priority":   pris.tolist(),
         "Status":     stats_.tolist(),
         "Days_Open":  ages.tolist(),
+        "Source":     ["Manual"]*n,
     })
 
-if 'drill_block' not in st.session_state:
-    st.session_state.drill_block = None
-if 'global_priority' not in st.session_state:
-    st.session_state.global_priority = "All"
-if 'global_block' not in st.session_state:
-    st.session_state.global_block = "All"
+for _k in ("ocr_result","classify_result","_gemini_active","gemini_key"):
+    if _k not in st.session_state:
+        st.session_state[_k] = None if _k != "_gemini_active" else _GEMINI_CHAIN[1]
+        if _k == "gemini_key": st.session_state[_k] = ""
 
 df        = st.session_state.grievances
 blocks_df = get_blocks_df()
-resolved  = len(df[df['Status']=='Resolved'])
+resolved  = len(df[df["Status"]=="Resolved"])
 
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("""
-    <div class="sidebar-brand">
-      <div class="wordmark">NGIS</div>
-      <div class="sub">Nalanda Intelligence System</div>
-      <div class="loc">Hilsa Sub-Division · Bihar</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div style="height:5px;background:linear-gradient(90deg,#FF9933 33%,#fff 33%,#fff 66%,#138808 66%);margin:-1rem -1rem 0 -1rem"></div>', unsafe_allow_html=True)
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style='padding:16px 14px 10px;border-bottom:1px solid rgba(255,255,255,.15)'>
+      <div style='display:flex;align-items:center;gap:10px'>
+        <div style='width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:50%;
+             display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0'>⚖</div>
+        <div>
+          <div style='font-family:Noto Sans Devanagari,Noto Serif,serif;font-size:13px;
+               font-weight:700;color:#FFFFFF;line-height:1.2'>बिहार सरकार</div>
+          <div style='font-size:9px;color:rgba(255,255,255,.55);letter-spacing:1px;
+               text-transform:uppercase;margin-top:1px'>Government of Bihar</div>
+        </div>
+      </div>
+      <div style='margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.12)'>
+        <div style='font-family:Noto Sans,sans-serif;font-size:12px;font-weight:600;color:#F5C842'>NGIS</div>
+        <div style='font-size:9px;color:rgba(255,255,255,.45);letter-spacing:.5px;
+             font-family:Noto Sans,sans-serif'>Nalanda Grievance Intelligence System</div>
+        <div style='font-size:10px;color:rgba(255,255,255,.35);margin-top:2px;
+             font-family:Fira Code,monospace'>Hilsa Sub-Division · Nalanda</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
     selected = option_menu(
         menu_title=None,
-        options=["Today's Brief","Analytics Suite","Field Capture"],
-        icons=["grid-fill","bar-chart-fill","camera-fill"],
+        options=["Today's Brief","Analytics Suite","Field Capture","Scheme Intelligence"],
+        icons=["grid-fill","bar-chart-fill","camera-fill","building-fill"],
         default_index=0,
         styles={
             "container":         {"padding":"4px 8px","background":"transparent"},
-            "icon":              {"color":"#D4823A","font-size":"14px"},
-            "nav-link":          {"font-size":"13px","color":"#524840","font-family":"Plus Jakarta Sans",
-                                  "padding":"9px 12px","margin-bottom":"2px","border-radius":"2px"},
-            "nav-link-selected": {"background":"#1A1510","color":"#F2E8D9","font-weight":"600"},
-        }
+            "icon":              {"color":"#F5C842","font-size":"14px"},
+            "nav-link":          {"font-size":"13px","color":"rgba(255,255,255,.55)",
+                                  "font-family":"Noto Sans","padding":"9px 12px",
+                                  "margin-bottom":"2px","border-radius":"2px"},
+            "nav-link-selected": {"background":"rgba(255,255,255,.12)","color":"#FFFFFF","font-weight":"600"},
+        },
     )
 
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-    st.markdown("""<div style='height:1px;background:#1A1510;margin:0 -8px'></div>""", unsafe_allow_html=True)
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1px;background:rgba(255,255,255,.12);margin:0 -8px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-    # Global filters — all pages respond
-    st.markdown("<div style='font-size:9px;color:#5C4F42;text-transform:uppercase;letter-spacing:2px;font-family:Plus Jakarta Sans;padding-left:4px;margin-bottom:8px'>Global Filters</div>", unsafe_allow_html=True)
-    gp = st.selectbox("Priority", ["All","High","Medium","Low"], label_visibility="collapsed",
-                      key="global_priority")
-    gb = st.selectbox("Block", ["All"]+sorted(df['Block'].unique().tolist()),
-                      label_visibility="collapsed", key="global_block")
+    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:5px'>Gemini API Key</div>", unsafe_allow_html=True)
+    raw_key = st.text_input("Gemini API Key", type="password", placeholder="AIza…",
+                             value=st.session_state.get("gemini_key",""), label_visibility="collapsed")
+    if raw_key and raw_key.strip():
+        st.session_state["gemini_key"] = raw_key.strip()
+        active_display = st.session_state.get("_gemini_active", _GEMINI_CHAIN[1])
+        st.markdown(f"<div style='font-size:10px;color:#6EE89A;font-family:Fira Code,monospace;padding-left:4px'>✓ Key set · {active_display}</div>", unsafe_allow_html=True)
+    else:
+        st.session_state["gemini_key"] = ""
+        st.markdown("<div style='font-size:10px;color:#F4A0A3;font-family:Fira Code,monospace;padding-left:4px'>⚠ No key — OCR disabled</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.25);font-family:Fira Code,monospace;padding-left:4px;margin-top:3px'>aistudio.google.com/apikey</div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1px;background:rgba(255,255,255,.12);margin:0 -8px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:6px'>फ़िल्टर · Filters</div>", unsafe_allow_html=True)
+    gp = st.selectbox("Priority", ["All","High","Medium","Low"], label_visibility="collapsed")
+    gb = st.selectbox("Block", ["All"]+sorted(df["Block"].unique().tolist()), label_visibility="collapsed")
+
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     now = datetime.now()
-    st.markdown(f"""
-    <div style='font-family:Fira Code,monospace;font-size:10px;color:#3A2E22;line-height:2;padding-left:4px'>
-      {now.strftime('%d %b %Y  %H:%M')}<br>
-      Pop  1,97,309<br>
-      Area 140 km²<br>
-      Vtgs 56 · Blks 20
-    </div>""", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-family:Fira Code,monospace;font-size:10px;color:rgba(255,255,255,.25);line-height:2;padding-left:4px'>{now.strftime('%d %b %Y  %H:%M')}<br>जनसंख्या: 1,97,309<br>क्षेत्र: 140 km²<br>ग्राम: 56 · प्रखंड: 20</div>", unsafe_allow_html=True)
 
-
-# ── Apply global filters ───────────────────────────────────────────────────────
 fdf = df.copy()
-if st.session_state.global_priority != "All":
-    fdf = fdf[fdf['Priority']==st.session_state.global_priority]
-if st.session_state.global_block != "All":
-    fdf = fdf[fdf['Block']==st.session_state.global_block]
+if gp != "All": fdf = fdf[fdf["Priority"]==gp]
+if gb != "All": fdf = fdf[fdf["Block"]==gb]
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # PAGE 1 — TODAY'S BRIEF
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 if selected == "Today's Brief":
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    today_n   = len(df[df['Date']==today_str])
-    high_n    = len(df[df['Priority']=='High'])
-    pending_n = len(df[df['Status']=='Open'])
-    res_rate  = int(resolved/len(df)*100)
-
-    # Hardcoding the default image URL directly to avoid any image_loader errors
-    bg_default = "url('https://photodharma.net/India/Nalanda/images/Nalanda-Original-00016.jpg?q=80&w=2000&auto=format&fit=crop')"
-
+    st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
     st.markdown(f"""
-    <style>
-    .ngis-hero-large {{
-        position: relative; width: 100%; 
-        height: 300px; 
-        overflow: hidden; border-radius: 0 0 12px 12px; 
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-    }}
-    .ngis-hero-bg-single {{
-        position: absolute; inset: 0;
-        background-image: {bg_default};
-        background-size: cover; background-position: center;
-        filter: saturate(0.8) brightness(0.85);
-    }}
-    .ngis-hero-over-dark {{
-        position: absolute; inset: 0;
-        /* Switched to a dark gradient overlay so white text stands out */
-        background: linear-gradient(90deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.1) 100%);
-        display: flex; align-items: flex-end; padding: 32px 52px;
-    }}
-    .ngis-hero-over-dark h1 {{
-        font-family: 'Instrument Serif', serif !important; 
-        font-size: 3.5rem !important; 
-        color: #FFFFFF !important; /* Changed to White */
-        margin: 0 0 8px !important; 
-        line-height: 1.1 !important; 
-        font-weight: 600 !important;
-        text-shadow: 2px 2px 6px rgba(0,0,0,0.5);
-    }}
-    .ngis-hero-over-dark p {{
-        color: #F8F5F0 !important; /* Changed to Cream */
-        font-size: 15px; margin: 0; letter-spacing: 0.5px; 
-        font-family: 'Plus Jakarta Sans', sans-serif; 
-        font-weight: 500;
-        text-shadow: 1px 1px 4px rgba(0,0,0,0.5);
-    }}
-    </style>
-    
-    <div class="ngis-hero-large">
-      <div class="ngis-hero-bg-single"></div>
-      <div class="ngis-hero-over-dark">
+    <div class="ngis-hero">
+      <div class="gov-header-top">
+        <div class="gov-emblem">⚖</div>
         <div>
-          <h1>Today's Brief</h1>
-          <p>Live grievance status · Nalanda District · {datetime.now().strftime("%d %B %Y, %A")}</p>
+          <div class="gov-title-hi">अनुमंडल कार्यालय, हिलसा (नालंदा) — जनता दरबार नियंत्रण केंद्र</div>
+          <div class="gov-title-en">Sub-Divisional Office, Hilsa (Nalanda) · Janata Darbar Command Center</div>
         </div>
       </div>
-    </div>
-    """, unsafe_allow_html=True)
-
+      <div class="gov-page-bar">
+        <div class="gov-page-title">आज का विवरण · Today's Brief</div>
+        <div class="gov-page-sub">शिकायत प्रबंधन प्रणाली · {datetime.now().strftime("%d %B %Y, %A")}</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
 
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
-    # Auto-generated daily summary
-    top_block = fdf['Block'].value_counts().idxmax() if len(fdf) else "—"
-    top_cat   = fdf['Category'].value_counts().idxmax().split("/")[0].strip() if len(fdf) else "—"
+    today_str   = datetime.now().strftime("%Y-%m-%d")
+    today_n     = len(df[df["Date"]==today_str])
+    high_n      = len(df[df["Priority"]=="High"])
+    pending_n   = len(df[df["Status"]=="Open"])
+    res_rate    = int(resolved/len(df)*100) if len(df) else 0
+    top_block   = fdf["Block"].value_counts().idxmax() if len(fdf) else "—"
+    top_cat     = fdf["Category"].value_counts().idxmax().split("/")[0].strip() if len(fdf) else "—"
+    total_len   = len(fdf)
+    high_pct    = int(high_n/len(df)*100) if len(df) else 0
+    pending_pct = int(pending_n/len(df)*100) if len(df) else 0
+
     st.markdown(f"""
-    <div class="sys-brief">
-      <strong style="color:#1E3A8A; font-family:'Instrument Serif', serif; font-size: 18px; letter-spacing: 0.5px;">System Brief — </strong>
-      {len(fdf)} active records in view · {today_n} filed today ·
-      Highest volume block: <strong style="color:#D98A73">{top_block}</strong> ·
-      Dominant category: <strong style="color:#9CAF88">{top_cat}</strong> ·
-      {high_n} high-priority items requiring attention ·
-      Resolution rate: <strong style="color:#4A6348">{res_rate}%</strong>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="brief-card">
+      <strong>सिस्टम विवरण (System Brief) —</strong>
+      कुल {total_len} शिकायतें · आज {today_n} प्राप्त ·
+      सर्वाधिक: <strong style="color:#1B3764">{_html.escape(top_block)}</strong> ·
+      प्रमुख श्रेणी: <strong style="color:#1B6B7B">{_html.escape(top_cat)}</strong> ·
+      {high_n} अत्यावश्यक · निराकरण दर <strong style="color:#1A7A3C">{res_rate}%</strong>
+    </div>""", unsafe_allow_html=True)
 
-    # KPI row with sparklines
-    daily = df.groupby('Date').size().reset_index(name='c').sort_values('Date')
-    spark_total = daily['c'].tolist()[-14:]
-    high_daily  = df[df['Priority']=='High'].groupby('Date').size().reset_index(name='c').sort_values('Date')
-    spark_high  = high_daily['c'].tolist()[-14:]
+    st.markdown(f"""
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">कुल शिकायतें</span> · Total</div>
+        <div class="kpi-value">{len(df)}</div>
+        <div class="kpi-delta">{today_n} आज प्राप्त</div>
+      </div>
+      <div class="kpi-card k-red">
+        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">अत्यावश्यक</span> · High Priority</div>
+        <div class="kpi-value">{high_n}</div>
+        <div class="kpi-delta down">{high_pct}% of total</div>
+      </div>
+      <div class="kpi-card k-amb">
+        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">लंबित</span> · Pending</div>
+        <div class="kpi-value">{pending_n}</div>
+        <div class="kpi-delta">{pending_pct}% of total</div>
+      </div>
+      <div class="kpi-card k-green">
+        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">निराकरण दर</span> · Resolution</div>
+        <div class="kpi-value">{res_rate}%</div>
+        <div class="kpi-delta up">of all registered</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
 
-    st.markdown(
-        '<div class="kpi-row">' +
-        kpi("Total Grievances",   len(df),  f"{today_n} today",      "flat",  spark_total, GOLD) +
-        kpi("High Priority",      high_n,   "requires action",        "down",  spark_high,  RED) +
-        kpi("Pending / Open",     pending_n,f"{pending_n} in queue",  "flat",  None,        AMBER) +
-        kpi("Resolution Rate",    f"{res_rate}%", "of all registered","up",   None,        GREEN) +
-        '</div>', unsafe_allow_html=True
-    )
-
-   # ── Category Status Metric Blocks ───────────────────────────────────────────────
-    st.markdown('<div class="sec-label">Category Status Overview · Open vs Progress vs Done</div>', unsafe_allow_html=True)
-
-    # Group data by Category and Status, then unstack to get columns for each status
-    cat_status = fdf.groupby(['Category', 'Status']).size().unstack(fill_value=0)
-    
-    # Ensure all statuses exist in the dataframe to prevent KeyError
-    for stat in ['Open', 'In Progress', 'Resolved']:
-        if stat not in cat_status.columns:
-            cat_status[stat] = 0
-            
-    # Calculate Total to sort the cards by highest volume first
-    cat_status['Total'] = cat_status['Open'] + cat_status['In Progress'] + cat_status['Resolved']
-    cat_status = cat_status.sort_values('Total', ascending=False)
-
-    # Build the HTML grid (compressed to avoid Markdown code block triggers)
-    cards = []
-    for cat, row in cat_status.iterrows():
-        # Using implicit string concatenation to keep the Python readable 
-        # while passing a single-line string to the HTML renderer
-        card = (
-            f'<div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-top: 3px solid #ABC4D8; border-radius: 8px; padding: 18px 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.04);">'
-            f'<div style="font-size:13px; color:#1E3A8A; font-weight:600; margin-bottom:14px; font-family:\'Plus Jakarta Sans\',sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{cat}">{cat}</div>'
-            f'<div style="display:flex; justify-content:space-between; font-family:\'Fira Code\',monospace; font-size:10px;">'
-            f'<div style="display:flex; flex-direction:column; align-items:flex-start;"><span style="color:#5C4F42; margin-bottom:4px; letter-spacing:1px; font-weight:600;">OPEN</span><span style="color:#C67D6F; font-size:20px;">{row["Open"]}</span></div>'
-            f'<div style="display:flex; flex-direction:column; align-items:center;"><span style="color:#5C4F42; margin-bottom:4px; letter-spacing:1px; font-weight:600;">PROG</span><span style="color:#D1AE6C; font-size:20px;">{row["In Progress"]}</span></div>'
-            f'<div style="display:flex; flex-direction:column; align-items:flex-end;"><span style="color:#5C4F42; margin-bottom:4px; letter-spacing:1px; font-weight:600;">DONE</span><span style="color:#8EA38B; font-size:20px;">{row["Resolved"]}</span></div>'
-            f'</div></div>'
-        )
-        cards.append(card)
-
-    # Join all cards into the grid container on a single line
-    grid_html = f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">{"".join(cards)}</div>'
-
-    # Render the custom HTML grid
-    st.markdown(grid_html, unsafe_allow_html=True)
+    c1, c2 = st.columns([3,2], gap="large")
+    with c1:
+        hm  = fdf.groupby(["Block","Priority"]).size().reset_index(name="Count")
+        fig = px.bar(hm, x="Block", y="Count", color="Priority", barmode="stack",
+                     color_discrete_map={"High":RED,"Medium":AMBER,"Low":GREEN})
+        fig.update_layout(xaxis_title=None, yaxis_title=None)
+        ct(fig,"प्रखंड एवं प्राथमिकता अनुसार शिकायत · Block-wise Volume by Priority",h=300)
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        in_prog = len(df[df["Status"]=="In Progress"])
+        fig_f   = go.Figure(go.Funnel(
+            y=["Registered","Triaged","In Progress","Resolved"],
+            x=[len(df), int(len(df)*0.82), in_prog, resolved],
+            textinfo="value+percent initial",
+            connector=dict(line=dict(color=LGRID, width=1.5)),
+            marker=dict(color=[NAVY,AMBER,TEAL,GREEN]),
+        ))
+        ct(fig_f,"निराकरण चैनल · Resolution Pipeline",h=300)
+        st.plotly_chart(fig_f, use_container_width=True)
 
     st.markdown('<div class="ngis-hr"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-label">शिकायत प्रवाह · Block → Department → Status (Sankey Flow)</div>', unsafe_allow_html=True)
 
-    # Complaint register table
-    st.markdown('<div class="sec-label">Complaint Register · Sort and Filter</div>', unsafe_allow_html=True)
-    category_options = ["All"] + sorted(fdf['Category'].dropna().unique().tolist())
-    c_cat, c_age = st.columns([2, 1], gap="medium")
-    with c_cat:
-        category_choice = st.selectbox("Category", category_options, label_visibility="collapsed")
-    with c_age:
-        age_order = st.selectbox("Age order", ["Descending", "Ascending"], index=0, label_visibility="collapsed")
+    bl=fdf["Block"].unique().tolist(); dl=fdf["Department"].unique().tolist(); sl=fdf["Status"].unique().tolist()
+    nodes=bl+dl+sl; nm={n:i for i,n in enumerate(nodes)}
+    s1,t1,v1=[],[],[]
+    for (b,d),g in fdf.groupby(["Block","Department"]): s1.append(nm[b]); t1.append(nm[d]); v1.append(len(g))
+    s2,t2,v2=[],[],[]
+    for (d,s),g in fdf.groupby(["Department","Status"]): s2.append(nm[d]); t2.append(nm[s]); v2.append(len(g))
+    nc=([TEAL]*len(bl)+[NAVY]*len(dl)+[RED if x=="Open" else AMBER if x=="In Progress" else GREEN for x in sl])
+    fig_sk=go.Figure(go.Sankey(
+        node=dict(label=nodes,color=nc,pad=24,thickness=14,line=dict(color=WHITE,width=0.5)),
+        link=dict(source=s1+s2,target=t1+t2,value=v1+v2,color="rgba(27,55,100,0.1)")
+    ))
+    ct(fig_sk,h=460); fig_sk.update_layout(margin=dict(t=10,b=10,l=10,r=10))
+    st.plotly_chart(fig_sk, use_container_width=True)
 
-    st.markdown(
-        "<div class='filter-bar'>Category filter applied first · Block A to Z · Priority High to Low · Status Open to In Progress to Closed</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="ngis-hr"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-label">शिकायत रजिस्टर · Grievance Register (Oldest Unresolved)</div>', unsafe_allow_html=True)
 
-    table_df = fdf.copy()
-    if category_choice != "All":
-        table_df = table_df[table_df['Category'] == category_choice]
-
-    if len(table_df):
-        table_df = table_df.copy()
-        table_df['Status_Display'] = table_df['Status'].replace({'Resolved': 'Closed'})
-        priority_rank = {'High': 0, 'Medium': 1, 'Low': 2}
-        status_rank = {'Open': 0, 'In Progress': 1, 'Closed': 2}
-        table_df['_priority_rank'] = table_df['Priority'].map(priority_rank).fillna(99).astype(int)
-        table_df['_status_rank'] = table_df['Status_Display'].map(status_rank).fillna(99).astype(int)
-        table_df['_block_sort'] = table_df['Block'].astype(str).str.lower()
-        table_df['_category_sort'] = table_df['Category'].astype(str).str.lower()
-        table_df = table_df.sort_values(
-            by=['_priority_rank', '_block_sort', '_status_rank', 'Days_Open', 'ID'],
-            ascending=[True, True, True, age_order == 'Ascending', True],
-        ).head(15)
-    else:
-        table_df = table_df.copy()
-
-    def priority_badge(p):
-        c = RED if p == "High" else AMBER if p == "Medium" else GREEN
-        return f'<span style="color:{c};font-family:Fira Code,monospace;font-size:10px">● {p}</span>'
-
-    def age_badge(d):
-        c = RED if d > 20 else AMBER if d > 10 else MUTED
-        return f'<span style="color:{c};font-family:Fira Code,monospace">{d}d</span>'
-
-    rows = ""
-    for _, row in table_df.iterrows():
-        status_value = row.get('Status_Display', row['Status'])
-        rows += f"""<tr style="border-bottom:1px solid #F3F4F6; transition: background 0.2s;" onmouseover="this.style.background='#F9FAFB';" onmouseout="this.style.background='transparent';">
-            <td style="padding:12px 16px; color:#1E3A8A; font-family:'Fira Code', monospace; font-size:12px; font-weight:500;">{row['ID']}</td>
-            <td style="padding:12px 16px; color:#4B5563; font-size:12px;">{row['Category'].split('/')[0].strip()}</td>
-            <td style="padding:12px 16px; color:#6B7280; font-size:12px;">{row['Block']}</td>
-            <td style="padding:12px 16px; font-size:12px;">{priority_badge(row['Priority'])}</td>
-            <td style="padding:12px 16px;">{age_badge(row['Days_Open'])}</td>
-            <td style="padding:12px 16px; color:#524840; font-size:11px; font-family:'Fira Code', monospace;">{status_value}</td>
-        </tr>"""
+    oldest = fdf[fdf["Status"]!="Resolved"].sort_values("Days_Open",ascending=False).head(15)
+    rows_html = ""
+    for _, row in oldest.iterrows():
+        pri_cls     = "p-high" if row["Priority"]=="High" else "p-med" if row["Priority"]=="Medium" else "p-low"
+        age_cls     = "age-red" if row["Days_Open"]>20 else "age-amb" if row["Days_Open"]>10 else "age-ok"
+        pri_sym     = "▲" if row["Priority"]=="High" else "►" if row["Priority"]=="Medium" else "●"
+        cat_short   = _html.escape(row["Category"].split("/")[0].strip())
+        dept_short  = _html.escape(row["Department"].split("(")[0].strip()[:25])
+        src         = _html.escape(str(row.get("Source","Manual")))
+        block_esc   = _html.escape(str(row["Block"]))
+        status_color= "#C02020" if row["Status"]=="Open" else "#C8820A" if row["Status"]=="In Progress" else "#1A7A3C"
+        status_esc  = _html.escape(str(row["Status"]))
+        rows_html  += (
+            f"<tr>"
+            f'<td style="font-family:Fira Code,monospace;color:{NAVY};font-weight:600;text-align:center">{_html.escape(str(row["ID"]))}</td>'
+            f'<td style="font-family:Fira Code,monospace;font-size:11px">{_html.escape(str(row["Date"]))}</td>'
+            f'<td style="color:{TXT};font-weight:500">{cat_short}</td>'
+            f'<td style="color:#5C5048;font-size:11px">{dept_short}</td>'
+            f'<td style="color:{TXT}">{block_esc}</td>'
+            f'<td><span class="{pri_cls}">{pri_sym} {row["Priority"]}</span></td>'
+            f'<td class="{age_cls}">{row["Days_Open"]}d</td>'
+            f'<td style="color:{status_color};font-size:11px;font-weight:500">{status_esc}</td>'
+            f'<td><span class="src-badge">{src}</span></td>'
+            f"</tr>"
+        )
 
     st.markdown(f"""
-    <div style="background:#FFFFFF; border:1px solid #E5E7EB; border-radius:8px; overflow:hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04);">
-        <table style="width:100%; border-collapse:collapse;">
-            <thead>
-                <tr style="background-color:#F8F5F0; border-bottom:2px solid #D98A73;">
-                    <th style="padding:14px 16px; text-align:left; font-size:10px; color:#1E3A8A; text-transform:uppercase; letter-spacing:1.5px; font-family:'Plus Jakarta Sans', sans-serif; font-weight:700;">ID</th>
-                    <th style="padding:14px 16px; text-align:left; font-size:10px; color:#1E3A8A; text-transform:uppercase; letter-spacing:1.5px; font-family:'Plus Jakarta Sans', sans-serif; font-weight:700;">Category</th>
-                    <th style="padding:14px 16px; text-align:left; font-size:10px; color:#1E3A8A; text-transform:uppercase; letter-spacing:1.5px; font-family:'Plus Jakarta Sans', sans-serif; font-weight:700;">Block</th>
-                    <th style="padding:14px 16px; text-align:left; font-size:10px; color:#1E3A8A; text-transform:uppercase; letter-spacing:1.5px; font-family:'Plus Jakarta Sans', sans-serif; font-weight:700;">Priority</th>
-                    <th style="padding:14px 16px; text-align:left; font-size:10px; color:#1E3A8A; text-transform:uppercase; letter-spacing:1.5px; font-family:'Plus Jakarta Sans', sans-serif; font-weight:700;">Age</th>
-                    <th style="padding:14px 16px; text-align:left; font-size:10px; color:#1E3A8A; text-transform:uppercase; letter-spacing:1.5px; font-family:'Plus Jakarta Sans', sans-serif; font-weight:700;">Status</th>
-                </tr>
-            </thead>
-            <tbody>{rows}</tbody>
-        </table>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="reg-wrap">
+      <table class="reg-table">
+        <thead><tr>
+          <th style="text-align:center"><span class="hi">क्र.सं.</span><span class="en">Sl. No.</span></th>
+          <th><span class="hi">दिनांक</span><span class="en">Date</span></th>
+          <th><span class="hi">श्रेणी</span><span class="en">Category</span></th>
+          <th><span class="hi">विभाग</span><span class="en">Department</span></th>
+          <th><span class="hi">प्रखंड</span><span class="en">Block</span></th>
+          <th><span class="hi">प्राथमिकता</span><span class="en">Priority</span></th>
+          <th><span class="hi">आयु (दिन)</span><span class="en">Age (Days)</span></th>
+          <th><span class="hi">स्थिति</span><span class="en">Status</span></th>
+          <th><span class="hi">स्रोत</span><span class="en">Source</span></th>
+        </tr></thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+    </div>""", unsafe_allow_html=True)
 
-    # Spike detection
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-    daily2 = df.groupby('Date').size().reset_index(name='c')
-    if len(daily2) > 3:
-        spikes = daily2[daily2['c'] > daily2['c'].mean() + 1.5*daily2['c'].std()]
-        if not spikes.empty:
-            st.markdown(f"<div class='alrt-block'>⚠ SPIKE — Abnormal complaint volume on {', '.join(spikes['Date'].tolist())}. Block-level investigation recommended.</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='good-block'>✓ No volume spikes detected in the last 45 days. System operating within normal parameters.</div>", unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # PAGE 2 — ANALYTICS SUITE
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 elif selected == "Analytics Suite":
-
-    bg2 = hero_css_bg("rajgir")
+    st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="ngis-hero">
-      <div class="ngis-hero-bg" style="background-image:{bg2};position:absolute;inset:0"></div>
-      <div class="ngis-hero-over">
+      <div class="gov-header-top">
+        <div class="gov-emblem">📊</div>
         <div>
-          <h1>Analytics Suite</h1>
-          <p>Power BI-style drill-down · scheme compliance · predictive forecasting · risk intelligence</p>
+          <div class="gov-title-hi">डेटा विश्लेषण केंद्र — नालंदा जिला</div>
+          <div class="gov-title-en">Data Analytics Center — Nalanda District</div>
         </div>
       </div>
-    </div>
-    """, unsafe_allow_html=True)
-
+      <div class="gov-page-bar">
+        <div class="gov-page-title">Analytics Suite</div>
+        <div class="gov-page-sub">JJM · MGNREGA · Scheme compliance · Forecasting · Block drill-down</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
-    # Heatmap & Drill-down for Hilsa Sub-division
-    st.markdown("""<h3 style="font-family: 'Instrument Serif', serif; font-size: 28px; color: #1E3A8A; margin-bottom: 20px;">Hilsa Sub-division Grievance Heatmap</h3>""", unsafe_allow_html=True)
+    tabs = st.tabs(["📊  Grievance Intelligence","💧  Scheme Compliance","📈  Forecasting","🗺️  Block Drill-Down"])
 
-    hilsa_blocks = ['Hilsa', 'Chandi', 'Ekangarsarai', 'Islampur', 'Karai Parsurai', 'Parbalpur', 'Tharthari']
-    
-    # Filter for Hilsa sub-division
-    hilsa_fdf = fdf[fdf['Block'].isin(hilsa_blocks)].copy()
-    
-    # Load boundaries
-    import json
-    try:
-        with open("hilsa_boundaries.geojson", "r") as f:
-            geojson_data = json.load(f)
-    except:
-        geojson_data = {}
+    with tabs[0]:
+        c1,c2 = st.columns(2,gap="large")
+        with c1:
+            bc=(fdf.groupby("Block").agg(Total=("ID","count"),Resolved=("Status",lambda x:(x=="Resolved").sum())).reset_index())
+            bc["Res_Rate"]=(bc["Resolved"]/bc["Total"]*100).round(1)
+            bc=bc.sort_values("Total",ascending=False)
+            fig=make_subplots(specs=[[{"secondary_y":True}]])
+            fig.add_bar(x=bc["Block"],y=bc["Total"],name="Total",marker_color=NAVY,opacity=0.8,secondary_y=False)
+            fig.add_bar(x=bc["Block"],y=bc["Resolved"],name="Resolved",marker_color=GREEN,opacity=0.9,secondary_y=False)
+            fig.add_scatter(x=bc["Block"],y=bc["Res_Rate"],name="Rate %",line=dict(color=SAFF,width=2.5),mode="lines+markers",marker=dict(size=6),secondary_y=True)
+            fig.update_layout(barmode="overlay",paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+                              font=dict(color=MUTED,family="Noto Sans"),
+                              title=dict(text="Total vs Resolved + Resolution Rate",font=dict(family="Noto Serif,serif",size=14,color=TXT)),
+                              xaxis=dict(gridcolor=LGRID,tickangle=-35,title=None),margin=dict(t=46,b=14,l=8,r=8),height=320,
+                              legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1),
+                              hoverlabel=dict(bgcolor=WHITE,bordercolor=LGRID,font=dict(color=TXT)))
+            fig.update_yaxes(gridcolor=LGRID,secondary_y=False)
+            fig.update_yaxes(showgrid=False,range=[0,120],ticksuffix="%",secondary_y=True)
+            st.plotly_chart(fig,use_container_width=True)
+        with c2:
+            fdf2=fdf.copy(); fdf2["cnt"]=1
+            fig_s=px.sunburst(fdf2,path=["Category","Priority"],values="cnt",color="Priority",
+                              color_discrete_map={"High":RED,"Medium":AMBER,"Low":GREEN,"(?)":MUTED})
+            ct(fig_s,"Category → Priority Sunburst",h=320)
+            fig_s.update_layout(margin=dict(t=46,b=0,l=0,r=0))
+            st.plotly_chart(fig_s,use_container_width=True)
 
-    # Aggregate
-    if not hilsa_fdf.empty:
-        agg_df = hilsa_fdf.groupby('Block').agg(
-            Total_Reports=('ID', 'count'),
-            High_Priority=('Priority', lambda x: (x == 'High').sum())
-        ).reset_index()
-        
-        fig = px.choropleth_mapbox(
-            agg_df, 
-            geojson=geojson_data,
-            locations="Block", 
-            featureidkey="properties.Block",
-            color="High_Priority",
-            color_continuous_scale="Reds",
-            mapbox_style="white-bg", # Hides underlying base map tiles for a clean look
-            zoom=9.5,
-            center={"lat": 25.25, "lon": 85.35},
-            hover_name="Block",
-            hover_data={"Total_Reports": True, "High_Priority": True},
-            title="Hilsa Sub-division Static Boundaries"
-        )
-        fig.update_layout(
-            margin={"r":0,"t":40,"l":0,"b":0},
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            dragmode=False # Disables panning and zooming to make it "static"
-        )
-        
-        st.markdown("<p style='color: #6B7280; font-size: 14px; margin-bottom: 10px;'>Click on a political boundary below to view detailed grievances.</p>", unsafe_allow_html=True)
-        
-        # We use on_select to capture clicks
-        selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
-        
-        selected_block = None
-        if selection and 'selection' in selection and 'points' in selection['selection']:
-            points = selection['selection']['points']
-            if len(points) > 0:
-                point_index = points[0]['point_index']
-                if point_index < len(agg_df):
-                    selected_block = agg_df.iloc[point_index]['Block']
-        
-        if selected_block:
-            st.markdown(f"---")
-            st.markdown(f"<h4 style='color: #1E3A8A; font-family: \"Instrument Serif\", serif;'>Detailed Problems for {selected_block}</h4>", unsafe_allow_html=True)
-            block_data = hilsa_fdf[hilsa_fdf['Block'] == selected_block].copy()
-            # Sort by priority High to Low
-            block_data['Priority_Rank'] = block_data['Priority'].map({'High': 0, 'Normal': 1})
-            block_data = block_data.sort_values(by=['Priority_Rank', 'Days_Open'], ascending=[True, False]).drop(columns=['Priority_Rank'])
-            
-            st.dataframe(block_data[['ID', 'Category', 'Priority', 'Days_Open', 'Status']], use_container_width=True, hide_index=True)
-            
-    else:
-        st.info("No reports found for Hilsa sub-division.")
+        pivot=fdf.groupby(["Block","Department"]).size().unstack(fill_value=0)
+        fig_hm=px.imshow(pivot,color_continuous_scale=[[0,WHITE],[0.3,LBG],[0.7,"#B8CCE8"],[1,NAVY]],text_auto=True,aspect="auto")
+        fig_hm.update_layout(coloraxis_colorbar=dict(title="Count",tickfont=dict(color=MUTED),thickness=10))
+        ct(fig_hm,"Block × Department Complaint Matrix",h=380)
+        st.plotly_chart(fig_hm,use_container_width=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    with tabs[1]:
+        jjm_df=pd.DataFrame([{"Block":b,**v} for b,v in JJM_COVERAGE.items()]).sort_values("coverage_pct",ascending=False)
+        c1,c2=st.columns([2,1],gap="large")
+        with c1:
+            fig=px.bar(jjm_df,x="Block",y=["coverage_pct","functional_pct"],barmode="group",
+                       color_discrete_map={"coverage_pct":TEAL,"functional_pct":NAVY},labels={"value":"%","variable":"Metric"})
+            fig.add_hline(y=80,line_dash="dot",line_color=SAFF,annotation_text="National 80%",annotation_font_color=SAFF)
+            fig.update_layout(xaxis_title=None,legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
+            ct(fig,"JJM Coverage vs Functional Connections")
+            st.plotly_chart(fig,use_container_width=True)
+        with c2:
+            fig_g=go.Figure(go.Indicator(
+                mode="gauge+number+delta",value=JJM_COVERAGE["Hilsa"]["coverage_pct"],
+                title={"text":"Hilsa JJM Coverage","font":{"color":MUTED,"family":"Noto Sans","size":13}},
+                delta={"reference":80,"suffix":"%"},number={"suffix":"%","font":{"color":NAVY,"size":44}},
+                gauge={"axis":{"range":[0,100],"tickcolor":LGRID},"bar":{"color":NAVY},
+                       "bgcolor":WHITE,"bordercolor":LGRID,
+                       "steps":[{"range":[0,60],"color":"#FEF0F0"},{"range":[60,100],"color":"#EFF7F1"}],
+                       "threshold":{"line":{"color":SAFF,"width":2},"value":80}}
+            ))
+            fig_g.update_layout(paper_bgcolor="rgba(0,0,0,0)",height=280,margin=dict(t=40,b=10,l=10,r=10))
+            st.plotly_chart(fig_g,use_container_width=True)
+
+        mgn_df=pd.DataFrame([{"Block":b,**v} for b,v in MGNREGA_DATA.items()]).sort_values("avg_delay_days",ascending=False)
+        mgn_df["col"]=mgn_df["avg_delay_days"].apply(lambda x:RED if x>40 else AMBER if x>25 else GREEN)
+        c1m,c2m=st.columns(2,gap="large")
+        with c1m:
+            fig_mg=go.Figure(go.Bar(x=mgn_df["Block"],y=mgn_df["avg_delay_days"],marker_color=mgn_df["col"]))
+            fig_mg.add_hline(y=15,line_dash="dash",line_color=GREEN,annotation_text="15d mandate",annotation_font_color=GREEN)
+            ct(fig_mg,"MGNREGA Wage Delay by Block (days)")
+            fig_mg.update_layout(xaxis=dict(tickangle=-35,title=None))
+            st.plotly_chart(fig_mg,use_container_width=True)
+        with c2m:
+            mgn_s=mgn_df.sort_values("pending_wages_lakh",ascending=False).copy()
+            mgn_s["cum"]=mgn_s["pending_wages_lakh"].cumsum()/mgn_s["pending_wages_lakh"].sum()*100
+            fp=make_subplots(specs=[[{"secondary_y":True}]])
+            fp.add_bar(x=mgn_s["Block"],y=mgn_s["pending_wages_lakh"],name="Pending ₹L",marker_color=NAVY,secondary_y=False)
+            fp.add_scatter(x=mgn_s["Block"],y=mgn_s["cum"],name="Cumulative %",line=dict(color=SAFF,width=2),secondary_y=True)
+            fp.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+                             font=dict(color=MUTED,family="Noto Sans"),
+                             title=dict(text="Pareto — Pending Wages",font=dict(family="Noto Serif,serif",size=14,color=TXT)),
+                             xaxis=dict(gridcolor=LGRID,tickangle=-35,title=None),
+                             legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1),
+                             margin=dict(t=46,b=14,l=8,r=8))
+            fp.update_yaxes(gridcolor=LGRID,secondary_y=False)
+            fp.update_yaxes(showgrid=False,range=[0,110],ticksuffix="%",secondary_y=True)
+            st.plotly_chart(fp,use_container_width=True)
+
+    with tabs[2]:
+        daily=df.groupby("Date").size().reset_index(name="count").sort_values("Date")
+        daily["date_num"]=range(len(daily))
+        x,y=daily["date_num"].values,daily["count"].values
+        c1,c2=st.columns([3,2],gap="large")
+        with c1:
+            if len(x)>=4:
+                coeffs=np.polyfit(x,y,1); fx=np.arange(len(x),len(x)+7); fy=np.polyval(coeffs,fx)
+                std_r=np.std(y-np.polyval(coeffs,x)); cu=fy+1.5*std_r; cl=np.maximum(fy-1.5*std_r,0)
+                fdates=[(datetime.now()+timedelta(days=i+1)).strftime("%Y-%m-%d") for i in range(7)]
+                fig_fc=go.Figure()
+                fig_fc.add_scatter(x=daily["Date"],y=daily["count"],name="Actual",line=dict(color=NAVY,width=2.5),mode="lines+markers",marker=dict(size=5,color=NAVY))
+                fig_fc.add_scatter(x=fdates+fdates[::-1],y=list(cu)+list(cl[::-1]),fill="toself",fillcolor="rgba(232,117,26,.08)",line=dict(color="rgba(0,0,0,0)"),name="Confidence Band")
+                fig_fc.add_scatter(x=fdates,y=fy,name="Forecast",line=dict(color=SAFF,width=2,dash="dot"),mode="lines+markers",marker=dict(size=5,color=SAFF))
+                m_,s_=np.mean(y),np.std(y)
+                anom=daily[np.abs(y-m_)>1.8*s_]
+                if not anom.empty:
+                    fig_fc.add_scatter(x=anom["Date"],y=anom["count"],mode="markers",name="Anomaly",marker=dict(color=RED,size=12,symbol="x"))
+                fig_fc.update_layout(xaxis=dict(showgrid=False,gridcolor=LGRID),yaxis_title="Daily Complaints",legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
+                ct(fig_fc,"45-Day Trend + 7-Day Forecast with Anomaly Detection",h=360)
+                st.plotly_chart(fig_fc,use_container_width=True)
+        with c2:
+            cat_d=df.groupby(["Date","Category"]).size().reset_index(name="count")
+            cat_d["cat_s"]=cat_d["Category"].apply(lambda x:x.split("/")[0].strip())
+            fig_ct=px.line(cat_d,x="Date",y="count",color="cat_s",color_discrete_sequence=[NAVY,SAFF,TEAL,RED,AMBER,GREEN,"#6B3A8A","#E87722","#795548"])
+            fig_ct.update_layout(legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
+            ct(fig_ct,"Category-wise Trends",h=360)
+            st.plotly_chart(fig_ct,use_container_width=True)
+
+    with tabs[3]:
+        st.markdown('<div class="sec-label">प्रखंड चुनें · Select Block for Drill-Down</div>', unsafe_allow_html=True)
+        drill=st.selectbox("",sorted(df["Block"].unique().tolist()),label_visibility="collapsed")
+        bdf_=df[df["Block"]==drill]
+        bdata=(blocks_df[blocks_df["Block"]==drill].iloc[0] if len(blocks_df[blocks_df["Block"]==drill]) else None)
+        if bdata is not None:
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("Population",f"{int(bdata['Population']):,}")
+            c2.metric("Literacy %",f"{bdata['Literacy_%']:.1f}%")
+            c3.metric("JJM Coverage",f"{bdata['JJM_Coverage_%']:.0f}%")
+            c4.metric("MGNREGA Delay",f"{bdata['MGNREGA_Delay_Days']:.0f} days")
+        c1,c2,c3=st.columns(3,gap="large")
+        with c1:
+            cat_b=bdf_.groupby("Category").size().reset_index(name="n")
+            cat_b["cat_s"]=cat_b["Category"].apply(lambda x:x.split("/")[0].strip())
+            fig_pb=px.pie(cat_b,values="n",names="cat_s",hole=0.52,color_discrete_sequence=[NAVY,SAFF,TEAL,RED,AMBER,GREEN,"#6B3A8A","#E87722"])
+            ct(fig_pb,f"{drill} — Category Mix",h=300)
+            fig_pb.update_layout(showlegend=False,margin=dict(t=46,b=0,l=0,r=0))
+            st.plotly_chart(fig_pb,use_container_width=True)
+        with c2:
+            pri_b=bdf_.groupby("Priority").size().reset_index(name="n")
+            fig_pr=go.Figure(go.Bar(x=pri_b["Priority"],y=pri_b["n"],
+                                    marker_color=[RED if p=="High" else AMBER if p=="Medium" else GREEN for p in pri_b["Priority"]],
+                                    text=pri_b["n"],textposition="outside",textfont=dict(color=MUTED,size=11)))
+            ct(fig_pr,f"{drill} — Priority",h=300)
+            fig_pr.update_layout(xaxis_title=None)
+            st.plotly_chart(fig_pr,use_container_width=True)
+        with c3:
+            if bdata is not None:
+                def timeliness(d): return max(0,100-((d-15)/15)*100)
+                cats_r=["Literacy","Sex Ratio/10","JJM Cover","MGNREGA OK","Res.Rate"]
+                vals=[bdata["Literacy_%"],bdata["Sex_Ratio"]/10,bdata["JJM_Coverage_%"],timeliness(bdata["MGNREGA_Delay_Days"]),len(bdf_[bdf_["Status"]=="Resolved"])/max(len(bdf_),1)*100]
+                fig_rd=go.Figure(go.Scatterpolar(r=vals+[vals[0]],theta=cats_r+[cats_r[0]],fill="toself",name=drill,line=dict(color=NAVY,width=2),fillcolor="rgba(27,55,100,.1)"))
+                fig_rd.update_layout(polar=dict(bgcolor="rgba(0,0,0,0)",radialaxis=dict(visible=True,range=[0,100],color=LGRID,gridcolor=LGRID,tickfont=dict(size=8,color=MUTED)),angularaxis=dict(color=MUTED,gridcolor=LGRID,tickfont=dict(color=MUTED))),paper_bgcolor="rgba(0,0,0,0)",title=dict(text=f"{drill} — Profile",font=dict(family="Noto Serif,serif",size=14,color=TXT)),margin=dict(t=46,b=10,l=20,r=20),height=300,showlegend=False)
+                st.plotly_chart(fig_rd,use_container_width=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # PAGE 3 — FIELD CAPTURE
-# ═══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 elif selected == "Field Capture":
-
-    bg3 = hero_css_bg("pawapuri")
+    st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="ngis-hero">
-      <div class="ngis-hero-bg" style="background-image:{bg3};position:absolute;inset:0"></div>
-      <div class="ngis-hero-over">
+      <div class="gov-header-top">
+        <div class="gov-emblem">📋</div>
         <div>
-          <h1>Field Digitization Terminal</h1>
-          <p>Heuristic NLP routing · jurisdiction chain · scheme mapping · auto-escalation</p>
+          <div class="gov-title-hi">जनता दरबार शिकायत पत्रावली — डिजिटल प्रविष्टि केंद्र</div>
+          <div class="gov-title-en">Janata Darbar Grievance Register — Digital Entry Terminal</div>
         </div>
       </div>
-    </div>
-    """, unsafe_allow_html=True)
-
+      <div class="gov-page-bar">
+        <div class="gov-page-title">Field Digitization Terminal</div>
+        <div class="gov-page-sub">Gemini OCR · Auto-classify · Register format output · HEIC/JPG/PNG</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
-    c1, c2 = st.columns([1, 1.7], gap="large")
-    with c1:
-        st.markdown('<div class="sec-label">Input Grievance Text</div>', unsafe_allow_html=True)
-        raw = st.text_area("", height=220,
-                           placeholder="हमारे गाँव में पानी की सप्लाई बंद है। हैंडपम्प खराब हो गया है...",
-                           label_visibility="collapsed")
-        go_btn = st.button("Classify & Route →", use_container_width=True)
+    input_mode=st.radio("Input Mode",["📷  Scan Letter (Image)","✍️  Type / Paste Text"],horizontal=True,label_visibility="collapsed")
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        st.markdown("""
-        <div style="background:#FFFFFFborder:1px solid #E5E7EB;border-radius:3px;padding:12px 14px;
-                    font-family:'Fira Code',monospace;font-size:10px;color:#3A2E22;line-height:1.9">
-          ENGINE  · Weighted bigram heuristic<br>
-          LANGS   · Hindi + English<br>
-          CATS    · 9 primary categories<br>
-          EXTRACT · Block · Village · Name · Date<br>
-          OUTPUT  · Dept · Jurisdiction · Schemes
+    left, right = st.columns([1,1.5], gap="large")
+    gemini_key_val = st.session_state.get("gemini_key","")
+    active_model   = st.session_state.get("_gemini_active", _GEMINI_CHAIN[1])
+
+    with left:
+        if input_mode == "📷  Scan Letter (Image)":
+            st.markdown('<div class="sec-label">दस्तावेज़ अपलोड करें · Upload Document</div>', unsafe_allow_html=True)
+            upload_option=st.radio("",["📁  Upload file","📷  Camera"],horizontal=True,label_visibility="collapsed")
+            img_bytes=None
+            heic_ok = _HEIC_OK or _LIBHEIF_OK
+
+            if upload_option == "📁  Upload file":
+                if not heic_ok:
+                    st.markdown('<div class="alert-warn">⚠ HEIC support unavailable — JPG &amp; PNG work fine\nFix: pip install pillow-heif → restart Streamlit</div>', unsafe_allow_html=True)
+                    allowed_types=["jpg","jpeg","png"]
+                else:
+                    allowed_types=["jpg","jpeg","png","heic","heif"]
+                uploaded=st.file_uploader("",type=allowed_types,label_visibility="collapsed")
+                if uploaded:
+                    raw=uploaded.read()
+                    img,err=open_image_safe(raw,uploaded.name)
+                    if err: st.error(f"Could not open image: {err}")
+                    else:
+                        buf=io.BytesIO(); img.save(buf,format="JPEG",quality=85); img_bytes=buf.getvalue()
+                        st.image(img_bytes,caption=f"✅ {uploaded.name} — ready for OCR",use_column_width=True)
+            else:
+                cam=st.camera_input("",label_visibility="collapsed")
+                if cam:
+                    raw_cam=cam.read(); img_cam,err_cam=open_image_safe(raw_cam,"camera.jpg")
+                    if err_cam: st.error(f"Camera error: {err_cam}")
+                    else:
+                        buf=io.BytesIO(); img_cam.save(buf,format="JPEG",quality=85); img_bytes=buf.getvalue()
+                        st.image(img_bytes,use_column_width=True)
+
+            if img_bytes:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                if not gemini_key_val:
+                    st.markdown('<div class="alert-high">⚠ Add Gemini API key in sidebar to enable OCR.\nGet free key: https://aistudio.google.com/apikey</div>', unsafe_allow_html=True)
+                else:
+                    if st.button("🔍 पत्र पढ़ें · Process with Gemini OCR", use_container_width=True):
+                        with st.spinner(f"Gemini ({active_model}) is reading the Hindi letter…"):
+                            client_tuple=init_gemini(gemini_key_val)
+                            client,sdk_type=client_tuple
+                            if client is None:
+                                st.markdown('<div class="alert-high">⚠ Failed to initialise Gemini.\nCheck API key: https://aistudio.google.com/apikey</div>', unsafe_allow_html=True)
+                            else:
+                                result=run_gemini_ocr(client_tuple,img_bytes)
+                                if "error" not in result:
+                                    st.session_state.ocr_result=result
+                                    clf=classify_complaint(result.get("transcription",""))
+                                    for field in ("block","village","complainant_name","date_filed"):
+                                        if result.get(field,"Unknown")!="Unknown": clf[field]=result[field]
+                                    st.session_state.classify_result=clf
+                                    st.rerun()
+                                else:
+                                    err_msg=result["error"]
+                                    cls="alert-warn" if "quota" in err_msg.lower() or "429" in err_msg else "alert-high"
+                                    st.markdown(f'<div class="{cls}">{_html.escape(err_msg)}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="sec-label">शिकायत पाठ दर्ज करें · Input Grievance Text</div>', unsafe_allow_html=True)
+            raw_text=st.text_area("",height=220,placeholder="हमारे गाँव में पानी की सप्लाई बंद है…",label_visibility="collapsed")
+            if st.button("वर्गीकृत करें · Classify & Route →", use_container_width=True):
+                if raw_text.strip():
+                    clf=classify_complaint(raw_text)
+                    st.session_state.ocr_result={"transcription":raw_text,"issue_summary":"Manual entry","complainant_name":clf.get("complainant_name","Unknown"),"village":clf.get("village","Unknown"),"block":clf.get("block","Unknown"),"date_filed":clf.get("date_filed","Unknown")}
+                    st.session_state.classify_result=clf
+                    st.rerun()
+
+        heic_ok     = _HEIC_OK or _LIBHEIF_OK
+        heic_status = "✓ HEIC · JPG · PNG · Camera" if heic_ok else "✗ HEIC unavail · JPG · PNG · Camera"
+        heic_color  = "#1A7A3C" if heic_ok else "#C02020"
+        key_status  = f"✓ Key set ({active_model})" if gemini_key_val else "✗ No key — set in sidebar"
+        key_color   = "#1A7A3C" if gemini_key_val else "#C02020"
+        st.markdown(f"""
+        <div class="processing-note">
+          OCR ENGINE  · Google Gemini (auto-fallback chain)<br>
+          <span style="color:{heic_color}">FORMATS     · {heic_status}</span><br>
+          <span style="color:{key_color}">API KEY     · {key_status}</span><br>
+          LANGUAGES   · Hindi Devanagari + English<br>
+          OUTPUT      · Register format (जनता दरबार पत्रावली)<br>
+          CATEGORIES  · 9 categories + प्रेषण (forwarding)<br>
+          SCHEMES     · Central + State + NITI Aayog
+        </div>""", unsafe_allow_html=True)
+
+    with right:
+        ocr = st.session_state.ocr_result
+        clf = st.session_state.classify_result
+
+        if ocr and clf:
+            new_id   = f"NLD-{len(st.session_state.grievances)+1:03d}"
+            reg_date = datetime.now().strftime("%d/%m/%Y")
+
+            # ── Safely escape ALL dynamic values before they touch HTML ──
+            e_name    = _html.escape(str(clf.get("complainant_name","Unknown")))
+            e_village = _html.escape(str(clf.get("village","Unknown")))
+            e_block   = _html.escape(str(clf.get("block","Unknown")))
+            e_dept    = _html.escape(str(clf["department"]))
+            e_cat     = _html.escape(f"{clf['icon']} {clf['category']}")
+            e_id      = _html.escape(new_id)
+            priority  = clf["priority"]
+            conf      = int(clf["confidence"]*100)
+            pri_cls   = "pri-high" if priority=="High" else "pri-normal"
+
+            # Summary — escape it; if it contains <> from Gemini output it won't corrupt HTML
+            raw_summary = ocr.get("issue_summary","")
+            if raw_summary and raw_summary not in ("Manual entry","Manually entered text"):
+                e_summary = _html.escape(raw_summary)
+            else:
+                e_summary = "—"
+
+            # Jurisdiction chain
+            jur_steps  = clf.get("jurisdiction","").split(" ➔ ")
+            jur_html   = "".join(
+                f'<span class="jur-step-light">{_html.escape(j)}</span>'
+                f'<span style="color:{MUTED};font-size:12px"> › </span>'
+                for j in jur_steps[:-1]
+            )
+            if jur_steps:
+                jur_html += f'<span class="jur-step-light">{_html.escape(jur_steps[-1])}</span>'
+
+            # Prashan boxes — safe .get() with fallback
+            prashan_list = clf.get("prashan_to", ["SDO"])
+            prashan_html = "".join(
+                f'<span class="prashan-box{"  highlight" if i==0 else ""}">'
+                f'{_html.escape(str(p))}</span>'
+                for i, p in enumerate(prashan_list)
+            )
+            first_prashan = _html.escape(str(prashan_list[0])) if prashan_list else "SDO"
+
+            # Schemes
+            schemes_html = "".join(
+                f'<div style="background:#EBF0FA;border:1px solid #B8CCE8;border-radius:2px;'
+                f'padding:4px 8px;font-size:11px;color:#1B3764;margin-bottom:3px">'
+                f'<strong>केंद्रीय:</strong> {_html.escape(str(s))}</div>'
+                for s in clf.get("central_schemes",[])
+            )
+            schemes_html += "".join(
+                f'<div style="background:#FEF3EB;border:1px solid #F5C89A;border-radius:2px;'
+                f'padding:4px 8px;font-size:11px;color:#7A3A0A;margin-bottom:3px">'
+                f'<strong>बिहार:</strong> {_html.escape(str(s))}</div>'
+                for s in clf.get("bihar_schemes",[])
+            )
+
+            # OCR transcription (collapsible) — use st.text_area for safe rendering
+            if ocr.get("transcription"):
+                st.markdown('<div class="sec-label">मूल पाठ · OCR Transcription</div>', unsafe_allow_html=True)
+                with st.expander("▼ पूर्ण हिंदी पाठ देखें · View full Hindi transcription"):
+                    st.markdown(
+                        f'<div style="background:#F5F3EE;border:1px solid #D4C9B8;border-radius:2px;'
+                        f'padding:12px 14px;font-family:Noto Sans Devanagari,Noto Sans,sans-serif;'
+                        f'font-size:13px;color:#1A1A2E;line-height:1.9;white-space:pre-wrap">'
+                        f'{_html.escape(str(ocr["transcription"]))}</div>',
+                        unsafe_allow_html=True
+                    )
+
+            st.markdown('<div class="sec-label" style="margin-top:14px">पत्रावली प्रविष्टि · Register Entry</div>', unsafe_allow_html=True)
+
+            # ── THE REGISTER TICKET  (NO HTML comments — that was the bug) ──
+            st.markdown(f"""
+<div class="reg-ticket">
+  <div class="reg-ticket-header">
+    <div class="reg-ticket-h1">अनुमंडल कार्यालय, हिलसा (नालंदा)</div>
+    <div class="reg-ticket-h2">Sub-Divisional Office, Hilsa (Nalanda) · Bihar Government</div>
+    <div class="reg-ticket-h3">जनता दरबार — शिकायत पत्रावली रजिस्टर</div>
+  </div>
+  <table>
+    <tr>
+      <td class="lbl"><span class="hi">क्र.सं.</span><span class="en">Sl. No.</span></td>
+      <td class="val mono" style="font-weight:600;color:{NAVY};font-size:16px">{e_id}</td>
+      <td class="lbl"><span class="hi">दिनांक</span><span class="en">Date</span></td>
+      <td class="val mono">{reg_date}</td>
+    </tr>
+    <tr>
+      <td class="lbl"><span class="hi">आवेदक</span><span class="en">Applicant</span></td>
+      <td class="val">{e_name}</td>
+      <td class="lbl"><span class="hi">ग्राम / प्रखंड</span><span class="en">Village / Block</span></td>
+      <td class="val">{e_village} · {e_block}</td>
+    </tr>
+    <tr>
+      <td class="lbl"><span class="hi">शिकायत श्रेणी</span><span class="en">Category</span></td>
+      <td class="val">{e_cat} &nbsp;<span style="font-size:10px;color:{MUTED}">Conf: {conf}%</span></td>
+      <td class="lbl"><span class="hi">प्राथमिकता</span><span class="en">Priority</span></td>
+      <td class="val"><span class="pri-stamp {pri_cls}">{priority}</span></td>
+    </tr>
+    <tr>
+      <td class="lbl"><span class="hi">विषय</span><span class="en">Subject</span></td>
+      <td class="val" colspan="3" style="font-family:Noto Sans,sans-serif">{e_summary}</td>
+    </tr>
+    <tr>
+      <td class="lbl"><span class="hi">प्रेषित विभाग</span><span class="en">Dept. Forwarded</span></td>
+      <td class="val" colspan="3">{e_dept}</td>
+    </tr>
+  </table>
+  <div class="section-hdr">प्रेषण · Forwarding Officers (प्रथम: {first_prashan})</div>
+  <div class="prashan-row">{prashan_html}</div>
+  <div class="section-hdr">न्यायाधिकार क्षेत्र · Jurisdiction Chain</div>
+  <div style="border:1px solid #D4C9B8;padding:10px 12px">
+    <div class="jur-chain-light">{jur_html}</div>
+  </div>
+  <div class="section-hdr">संबंधित योजनाएं · Applicable Schemes</div>
+  <div style="border:1px solid #D4C9B8;padding:10px 12px">{schemes_html}</div>
+</div>
+""", unsafe_allow_html=True)
+
+            # Escalation / routing instruction
+            dept_route = clf["department"].split("(")[0].strip()
+            if priority == "High":
+                esc_msg = "⚠ अत्यावश्यक — SDO कार्यालय को 24 घंटे के भीतर अग्रेषित करें। Collector साप्ताहिक समीक्षा में शामिल करें।\nHIGH PRIORITY — Escalate to SDO within 24 hours. Flag for Collector's weekly review."
+                esc_cls = "alert-high"
+            else:
+                esc_msg = f"→ {dept_route} को अग्रेषित करें। VB-GRAM-G अनुसार मानक SLA लागू।\nRoute to {dept_route}. Standard SLA applies under VB-GRAM-G mandate."
+                esc_cls = "alert-normal"
+            st.markdown(f'<div class="{esc_cls}">{_html.escape(esc_msg)}</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+            if st.button("✅ रजिस्टर में सहेजें · Save to NGIS Register", use_container_width=True):
+                date_val = clf.get("date_filed","Unknown")
+                try: datetime.strptime(date_val,"%Y-%m-%d")
+                except (ValueError,TypeError): date_val = datetime.now().strftime("%Y-%m-%d")
+                new_row=pd.DataFrame([{
+                    "ID":new_id,"Date":date_val,
+                    "Category":clf["category"],"Department":clf["department"],
+                    "Block":clf.get("block","Unknown"),"Priority":clf["priority"],
+                    "Status":"Open","Days_Open":0,"Source":"OCR / Gemini"
+                }])
+                st.session_state.grievances=pd.concat([st.session_state.grievances,new_row],ignore_index=True)
+                st.session_state.ocr_result=None; st.session_state.classify_result=None
+                st.success(f"✅ {new_id} — रजिस्टर में सहेजा गया। Today's Brief में देखें।")
+                st.rerun()
+
+        else:
+            st.markdown("""
+            <div style="text-align:center;padding:60px 20px;font-family:'Noto Sans',sans-serif;color:#8A7A6A">
+              <div style="font-size:48px;margin-bottom:12px">📋</div>
+              <div style="font-size:15px;font-weight:600;color:#1B3764;margin-bottom:6px">
+                जनता दरबार शिकायत पत्रावली
+              </div>
+              <div style="font-size:13px">Upload a HEIC/JPG/PNG letter image or paste text on the left</div>
+            </div>""", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PAGE 4 — SCHEME INTELLIGENCE
+# ══════════════════════════════════════════════════════════════════════
+elif selected == "Scheme Intelligence":
+    st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="ngis-hero">
+      <div class="gov-header-top">
+        <div class="gov-emblem">🏛</div>
+        <div>
+          <div class="gov-title-hi">योजना मानचित्रण — केंद्रीय एवं राज्य सरकार</div>
+          <div class="gov-title-en">Scheme Mapping — Central &amp; State Government + NITI Aayog</div>
         </div>
-        """, unsafe_allow_html=True)
+      </div>
+      <div class="gov-page-bar">
+        <div class="gov-page-title">Scheme Intelligence</div>
+        <div class="gov-page-sub">9 categories · SLA reference · Jurisdiction chains · NITI Aayog indicators</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+    st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
+    st.markdown('<div class="sec-label">सभी 9 श्रेणियां — योजना मानचित्रण · All 9 Categories — Scheme Mapping</div>', unsafe_allow_html=True)
 
-    with c2:
-        if go_btn and raw.strip():
-            with st.spinner("Running classification engine..."):
-                r = classify_complaint(raw)
-                new_id = f"NLD-{len(st.session_state.grievances)+1:03d}"
-                st.session_state.grievances = pd.concat([
-                    st.session_state.grievances,
-                    pd.DataFrame([{
-                        "ID": new_id, "Date": datetime.now().strftime("%Y-%m-%d"),
-                        "Category": r["category"], "Department": r["department"],
-                        "Block": r["block"], "Priority": r["priority"],
-                        "Status": "Open", "Days_Open": 0
-                    }])
-                ], ignore_index=True)
-
-            pri_col = RED if r['priority']=="High" else AMBER if r['priority']=="Medium" else GREEN
-            st.markdown(f"""
-            <div class="ticket-card">
-              <div style="font-size:9px;color:#5C4F42;text-transform:uppercase;letter-spacing:2px;
-                          font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:6px">Ticket Generated</div>
-              <div class="ticket-id">{new_id}</div>
-              <div class="ticket-meta">
-                {r['icon']} {r['category']} &nbsp;·&nbsp;
-                Priority <span style="color:{pri_col};font-weight:600">{r['priority']}</span> &nbsp;·&nbsp;
-                Block: {r['block']} &nbsp;·&nbsp; Confidence: {r['confidence']*100:.0f}%
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            st.markdown(f"""
-            <div style="margin-bottom:14px">
-              <div style="font-size:9px;color:#5C4F42;text-transform:uppercase;letter-spacing:2px;
-                          font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:6px">Department Routed</div>
-              <div style="font-size:16px;font-weight:600;color:#1F2937;font-family:'Plus Jakarta Sans',sans-serif">
-                {r['department']}
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+    cols = st.columns(3, gap="large")
+    for idx,(cat,data) in enumerate(SCHEMA.items()):
+        with cols[idx%3]:
+            c_html="".join([
+                f'<div class="scheme-central-tag"><strong>केंद्रीय / Central</strong> — {_html.escape(str(s))}</div>'
+                for s in data.get("central_schemes",[])
+            ])
+            s_html="".join([
+                f'<div class="scheme-state-tag"><strong>बिहार / Bihar</strong> — {_html.escape(str(s))}</div>'
+                for s in data.get("bihar_schemes",[])
+            ])
+            prashan_list  = data.get("prashan_to", [])
+            prashan_boxes = "".join([
+                f'<span class="prashan-box" style="font-size:9px">{_html.escape(str(p))}</span>'
+                for p in prashan_list
+            ])
+            jur_steps = data.get("jurisdiction","").split(" ➔ ")
+            jur_html  = " › ".join([
+                f'<span class="jur-step-light">{_html.escape(j)}</span>'
+                for j in jur_steps
+            ])
+            cat_short  = _html.escape(cat.split("/")[0].strip())
+            dept_short = _html.escape(data["department"].split("(")[0].strip())
+            icon_esc   = data["icon"]  # emoji — safe, no escape needed
 
             st.markdown(f"""
-            <div style="margin-bottom:14px">
-              <div style="font-size:9px;color:#5C4F42;text-transform:uppercase;letter-spacing:2px;
-                          font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:6px">Jurisdiction Chain</div>
-              <div class="jur">{r.get('jurisdiction','—')}</div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="scheme-entry">
+  <div class="scheme-entry-header">
+    <span style="font-size:20px">{icon_esc}</span>
+    <div>
+      <div style="color:#FFFFFF;font-weight:600;font-size:13px;font-family:Noto Sans,sans-serif">{cat_short}</div>
+      <div style="color:rgba(255,255,255,.5);font-size:10px;font-family:Fira Code,monospace">{dept_short}</div>
+    </div>
+  </div>
+  <div style="padding:10px 12px">
+    {c_html}{s_html}
+    <div style="margin-top:8px;font-size:9px;color:#1B3764;text-transform:uppercase;letter-spacing:1px;font-family:Noto Sans,sans-serif;font-weight:600;margin-bottom:4px">प्रेषण · Forwarding</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">{prashan_boxes}</div>
+    <div style="font-size:9px;color:#1B3764;text-transform:uppercase;letter-spacing:1px;font-family:Noto Sans,sans-serif;font-weight:600;margin-bottom:4px">न्यायाधिकार · Jurisdiction</div>
+    <div style="line-height:2;font-size:10px">{jur_html}</div>
+  </div>
+</div>""", unsafe_allow_html=True)
 
-            cs = r.get("central_schemes", [])
-            bs = r.get("bihar_schemes", [])
-            if cs or bs:
-                c_tags = "".join([f'<span class="tag tag-g">{s}</span>' for s in cs])
-                b_tags = "".join([f'<span class="tag tag-t">{s}</span>' for s in bs])
-                st.markdown(f"""
-                <div style="margin-bottom:14px">
-                  <div style="font-size:9px;color:#5C4F42;text-transform:uppercase;letter-spacing:2px;
-                              font-family:'Plus Jakarta Sans',sans-serif;margin-bottom:8px">Applicable Schemes</div>
-                  <div>{c_tags}{b_tags}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            esc = ("⚠ HIGH PRIORITY — Escalate to SDO within 24 hours. Flag for Collector's weekly review."
-                   if r["priority"]=="High" else
-                   "→ Route to department. 15-day resolution window under VB-GRAM-G applies.")
-            esc_cls = "alrt-block" if r["priority"]=="High" else "good-block"
-            st.markdown(f"<div class='{esc_cls}'>{esc}</div>", unsafe_allow_html=True)
-
-            # Similar past complaints
-            similar = df[df['Category']==r['category']].head(5)
-            if len(similar):
-                with st.expander(f"📋  {len(similar)} similar past complaints in {r['category'].split('/')[0].strip()}"):
-                    st.dataframe(similar[['ID','Block','Priority','Status','Days_Open']],
-                                 use_container_width=True, hide_index=True)
-
-        elif go_btn:
-            st.markdown("<div class='alrt-block'>Please enter grievance text before classifying.</div>", unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
