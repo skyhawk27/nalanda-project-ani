@@ -94,6 +94,7 @@ def open_image_safe(raw_bytes: bytes, filename: str = "") -> tuple:
 # ══════════════════════════════════════════════════════════════════════
 from real_data import get_blocks_df, HILSA_STATS, BLOCK_CENSUS, JJM_COVERAGE, MGNREGA_DATA
 from classifier import classify_complaint, SCHEMA
+from image_loader import hero_css_bg
 
 # ══════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
@@ -613,43 +614,6 @@ if selected == "Today's Brief":
       </div>
     </div>""", unsafe_allow_html=True)
 
-    c1, c2 = st.columns([3,2], gap="large")
-    with c1:
-        hm  = fdf.groupby(["Block","Priority"]).size().reset_index(name="Count")
-        fig = px.bar(hm, x="Block", y="Count", color="Priority", barmode="stack",
-                     color_discrete_map={"High":RED,"Medium":AMBER,"Low":GREEN})
-        fig.update_layout(xaxis_title=None, yaxis_title=None)
-        ct(fig,"प्रखंड एवं प्राथमिकता अनुसार शिकायत · Block-wise Volume by Priority",h=300)
-        st.plotly_chart(fig, use_container_width=True)
-    with c2:
-        in_prog = len(df[df["Status"]=="In Progress"])
-        fig_f   = go.Figure(go.Funnel(
-            y=["Registered","Triaged","In Progress","Resolved"],
-            x=[len(df), int(len(df)*0.82), in_prog, resolved],
-            textinfo="value+percent initial",
-            connector=dict(line=dict(color=LGRID, width=1.5)),
-            marker=dict(color=[NAVY,AMBER,TEAL,GREEN]),
-        ))
-        ct(fig_f,"निराकरण चैनल · Resolution Pipeline",h=300)
-        st.plotly_chart(fig_f, use_container_width=True)
-
-    st.markdown('<div class="ngis-hr"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="sec-label">शिकायत प्रवाह · Block → Department → Status (Sankey Flow)</div>', unsafe_allow_html=True)
-
-    bl=fdf["Block"].unique().tolist(); dl=fdf["Department"].unique().tolist(); sl=fdf["Status"].unique().tolist()
-    nodes=bl+dl+sl; nm={n:i for i,n in enumerate(nodes)}
-    s1,t1,v1=[],[],[]
-    for (b,d),g in fdf.groupby(["Block","Department"]): s1.append(nm[b]); t1.append(nm[d]); v1.append(len(g))
-    s2,t2,v2=[],[],[]
-    for (d,s),g in fdf.groupby(["Department","Status"]): s2.append(nm[d]); t2.append(nm[s]); v2.append(len(g))
-    nc=([TEAL]*len(bl)+[NAVY]*len(dl)+[RED if x=="Open" else AMBER if x=="In Progress" else GREEN for x in sl])
-    fig_sk=go.Figure(go.Sankey(
-        node=dict(label=nodes,color=nc,pad=24,thickness=14,line=dict(color=WHITE,width=0.5)),
-        link=dict(source=s1+s2,target=t1+t2,value=v1+v2,color="rgba(27,55,100,0.1)")
-    ))
-    ct(fig_sk,h=460); fig_sk.update_layout(margin=dict(t=10,b=10,l=10,r=10))
-    st.plotly_chart(fig_sk, use_container_width=True)
-
     st.markdown('<div class="ngis-hr"></div>', unsafe_allow_html=True)
     st.markdown('<div class="sec-label">शिकायत रजिस्टर · Grievance Register (Oldest Unresolved)</div>', unsafe_allow_html=True)
 
@@ -704,170 +668,91 @@ if selected == "Today's Brief":
 # PAGE 2 — ANALYTICS SUITE
 # ══════════════════════════════════════════════════════════════════════
 elif selected == "Analytics Suite":
-    st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
+
+    bg2 = hero_css_bg("rajgir")
     st.markdown(f"""
     <div class="ngis-hero">
-      <div class="gov-header-top">
-        <div class="gov-emblem">📊</div>
+      <div class="ngis-hero-bg" style="background-image:{bg2};position:absolute;inset:0"></div>
+      <div class="ngis-hero-over">
         <div>
-          <div class="gov-title-hi">डेटा विश्लेषण केंद्र — नालंदा जिला</div>
-          <div class="gov-title-en">Data Analytics Center — Nalanda District</div>
+          <h1>Analytics Suite</h1>
+          <p>Power BI-style drill-down · scheme compliance · predictive forecasting · risk intelligence</p>
         </div>
       </div>
-      <div class="gov-page-bar">
-        <div class="gov-page-title">Analytics Suite</div>
-        <div class="gov-page-sub">JJM · MGNREGA · Scheme compliance · Forecasting · Block drill-down</div>
-      </div>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
+
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
-    tabs = st.tabs(["📊  Grievance Intelligence","💧  Scheme Compliance","📈  Forecasting","🗺️  Block Drill-Down"])
+    # Heatmap & Drill-down for Hilsa Sub-division
+    st.markdown("""<h3 style="font-family: 'Instrument Serif', serif; font-size: 28px; color: #1E3A8A; margin-bottom: 20px;">Hilsa Sub-division Grievance Heatmap</h3>""", unsafe_allow_html=True)
 
-    with tabs[0]:
-        c1,c2 = st.columns(2,gap="large")
-        with c1:
-            bc=(fdf.groupby("Block").agg(Total=("ID","count"),Resolved=("Status",lambda x:(x=="Resolved").sum())).reset_index())
-            bc["Res_Rate"]=(bc["Resolved"]/bc["Total"]*100).round(1)
-            bc=bc.sort_values("Total",ascending=False)
-            fig=make_subplots(specs=[[{"secondary_y":True}]])
-            fig.add_bar(x=bc["Block"],y=bc["Total"],name="Total",marker_color=NAVY,opacity=0.8,secondary_y=False)
-            fig.add_bar(x=bc["Block"],y=bc["Resolved"],name="Resolved",marker_color=GREEN,opacity=0.9,secondary_y=False)
-            fig.add_scatter(x=bc["Block"],y=bc["Res_Rate"],name="Rate %",line=dict(color=SAFF,width=2.5),mode="lines+markers",marker=dict(size=6),secondary_y=True)
-            fig.update_layout(barmode="overlay",paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
-                              font=dict(color=MUTED,family="Noto Sans"),
-                              title=dict(text="Total vs Resolved + Resolution Rate",font=dict(family="Noto Serif,serif",size=14,color=TXT)),
-                              xaxis=dict(gridcolor=LGRID,tickangle=-35,title=None),margin=dict(t=46,b=14,l=8,r=8),height=320,
-                              legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1),
-                              hoverlabel=dict(bgcolor=WHITE,bordercolor=LGRID,font=dict(color=TXT)))
-            fig.update_yaxes(gridcolor=LGRID,secondary_y=False)
-            fig.update_yaxes(showgrid=False,range=[0,120],ticksuffix="%",secondary_y=True)
-            st.plotly_chart(fig,use_container_width=True)
-        with c2:
-            fdf2=fdf.copy(); fdf2["cnt"]=1
-            fig_s=px.sunburst(fdf2,path=["Category","Priority"],values="cnt",color="Priority",
-                              color_discrete_map={"High":RED,"Medium":AMBER,"Low":GREEN,"(?)":MUTED})
-            ct(fig_s,"Category → Priority Sunburst",h=320)
-            fig_s.update_layout(margin=dict(t=46,b=0,l=0,r=0))
-            st.plotly_chart(fig_s,use_container_width=True)
+    hilsa_blocks = ['Hilsa', 'Chandi', 'Ekangarsarai', 'Islampur', 'Karai Parsurai', 'Parbalpur', 'Tharthari']
+    
+    # Filter for Hilsa sub-division
+    hilsa_fdf = fdf[fdf['Block'].isin(hilsa_blocks)].copy()
+    
+    # Load boundaries
+    import json
+    try:
+        with open("hilsa_boundaries.geojson", "r") as f:
+            geojson_data = json.load(f)
+    except:
+        geojson_data = {}
 
-        pivot=fdf.groupby(["Block","Department"]).size().unstack(fill_value=0)
-        fig_hm=px.imshow(pivot,color_continuous_scale=[[0,WHITE],[0.3,LBG],[0.7,"#B8CCE8"],[1,NAVY]],text_auto=True,aspect="auto")
-        fig_hm.update_layout(coloraxis_colorbar=dict(title="Count",tickfont=dict(color=MUTED),thickness=10))
-        ct(fig_hm,"Block × Department Complaint Matrix",h=380)
-        st.plotly_chart(fig_hm,use_container_width=True)
-
-    with tabs[1]:
-        jjm_df=pd.DataFrame([{"Block":b,**v} for b,v in JJM_COVERAGE.items()]).sort_values("coverage_pct",ascending=False)
-        c1,c2=st.columns([2,1],gap="large")
-        with c1:
-            fig=px.bar(jjm_df,x="Block",y=["coverage_pct","functional_pct"],barmode="group",
-                       color_discrete_map={"coverage_pct":TEAL,"functional_pct":NAVY},labels={"value":"%","variable":"Metric"})
-            fig.add_hline(y=80,line_dash="dot",line_color=SAFF,annotation_text="National 80%",annotation_font_color=SAFF)
-            fig.update_layout(xaxis_title=None,legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
-            ct(fig,"JJM Coverage vs Functional Connections")
-            st.plotly_chart(fig,use_container_width=True)
-        with c2:
-            fig_g=go.Figure(go.Indicator(
-                mode="gauge+number+delta",value=JJM_COVERAGE["Hilsa"]["coverage_pct"],
-                title={"text":"Hilsa JJM Coverage","font":{"color":MUTED,"family":"Noto Sans","size":13}},
-                delta={"reference":80,"suffix":"%"},number={"suffix":"%","font":{"color":NAVY,"size":44}},
-                gauge={"axis":{"range":[0,100],"tickcolor":LGRID},"bar":{"color":NAVY},
-                       "bgcolor":WHITE,"bordercolor":LGRID,
-                       "steps":[{"range":[0,60],"color":"#FEF0F0"},{"range":[60,100],"color":"#EFF7F1"}],
-                       "threshold":{"line":{"color":SAFF,"width":2},"value":80}}
-            ))
-            fig_g.update_layout(paper_bgcolor="rgba(0,0,0,0)",height=280,margin=dict(t=40,b=10,l=10,r=10))
-            st.plotly_chart(fig_g,use_container_width=True)
-
-        mgn_df=pd.DataFrame([{"Block":b,**v} for b,v in MGNREGA_DATA.items()]).sort_values("avg_delay_days",ascending=False)
-        mgn_df["col"]=mgn_df["avg_delay_days"].apply(lambda x:RED if x>40 else AMBER if x>25 else GREEN)
-        c1m,c2m=st.columns(2,gap="large")
-        with c1m:
-            fig_mg=go.Figure(go.Bar(x=mgn_df["Block"],y=mgn_df["avg_delay_days"],marker_color=mgn_df["col"]))
-            fig_mg.add_hline(y=15,line_dash="dash",line_color=GREEN,annotation_text="15d mandate",annotation_font_color=GREEN)
-            ct(fig_mg,"MGNREGA Wage Delay by Block (days)")
-            fig_mg.update_layout(xaxis=dict(tickangle=-35,title=None))
-            st.plotly_chart(fig_mg,use_container_width=True)
-        with c2m:
-            mgn_s=mgn_df.sort_values("pending_wages_lakh",ascending=False).copy()
-            mgn_s["cum"]=mgn_s["pending_wages_lakh"].cumsum()/mgn_s["pending_wages_lakh"].sum()*100
-            fp=make_subplots(specs=[[{"secondary_y":True}]])
-            fp.add_bar(x=mgn_s["Block"],y=mgn_s["pending_wages_lakh"],name="Pending ₹L",marker_color=NAVY,secondary_y=False)
-            fp.add_scatter(x=mgn_s["Block"],y=mgn_s["cum"],name="Cumulative %",line=dict(color=SAFF,width=2),secondary_y=True)
-            fp.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
-                             font=dict(color=MUTED,family="Noto Sans"),
-                             title=dict(text="Pareto — Pending Wages",font=dict(family="Noto Serif,serif",size=14,color=TXT)),
-                             xaxis=dict(gridcolor=LGRID,tickangle=-35,title=None),
-                             legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1),
-                             margin=dict(t=46,b=14,l=8,r=8))
-            fp.update_yaxes(gridcolor=LGRID,secondary_y=False)
-            fp.update_yaxes(showgrid=False,range=[0,110],ticksuffix="%",secondary_y=True)
-            st.plotly_chart(fp,use_container_width=True)
-
-    with tabs[2]:
-        daily=df.groupby("Date").size().reset_index(name="count").sort_values("Date")
-        daily["date_num"]=range(len(daily))
-        x,y=daily["date_num"].values,daily["count"].values
-        c1,c2=st.columns([3,2],gap="large")
-        with c1:
-            if len(x)>=4:
-                coeffs=np.polyfit(x,y,1); fx=np.arange(len(x),len(x)+7); fy=np.polyval(coeffs,fx)
-                std_r=np.std(y-np.polyval(coeffs,x)); cu=fy+1.5*std_r; cl=np.maximum(fy-1.5*std_r,0)
-                fdates=[(datetime.now()+timedelta(days=i+1)).strftime("%Y-%m-%d") for i in range(7)]
-                fig_fc=go.Figure()
-                fig_fc.add_scatter(x=daily["Date"],y=daily["count"],name="Actual",line=dict(color=NAVY,width=2.5),mode="lines+markers",marker=dict(size=5,color=NAVY))
-                fig_fc.add_scatter(x=fdates+fdates[::-1],y=list(cu)+list(cl[::-1]),fill="toself",fillcolor="rgba(232,117,26,.08)",line=dict(color="rgba(0,0,0,0)"),name="Confidence Band")
-                fig_fc.add_scatter(x=fdates,y=fy,name="Forecast",line=dict(color=SAFF,width=2,dash="dot"),mode="lines+markers",marker=dict(size=5,color=SAFF))
-                m_,s_=np.mean(y),np.std(y)
-                anom=daily[np.abs(y-m_)>1.8*s_]
-                if not anom.empty:
-                    fig_fc.add_scatter(x=anom["Date"],y=anom["count"],mode="markers",name="Anomaly",marker=dict(color=RED,size=12,symbol="x"))
-                fig_fc.update_layout(xaxis=dict(showgrid=False,gridcolor=LGRID),yaxis_title="Daily Complaints",legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
-                ct(fig_fc,"45-Day Trend + 7-Day Forecast with Anomaly Detection",h=360)
-                st.plotly_chart(fig_fc,use_container_width=True)
-        with c2:
-            cat_d=df.groupby(["Date","Category"]).size().reset_index(name="count")
-            cat_d["cat_s"]=cat_d["Category"].apply(lambda x:x.split("/")[0].strip())
-            fig_ct=px.line(cat_d,x="Date",y="count",color="cat_s",color_discrete_sequence=[NAVY,SAFF,TEAL,RED,AMBER,GREEN,"#6B3A8A","#E87722","#795548"])
-            fig_ct.update_layout(legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
-            ct(fig_ct,"Category-wise Trends",h=360)
-            st.plotly_chart(fig_ct,use_container_width=True)
-
-    with tabs[3]:
-        st.markdown('<div class="sec-label">प्रखंड चुनें · Select Block for Drill-Down</div>', unsafe_allow_html=True)
-        drill=st.selectbox("",sorted(df["Block"].unique().tolist()),label_visibility="collapsed")
-        bdf_=df[df["Block"]==drill]
-        bdata=(blocks_df[blocks_df["Block"]==drill].iloc[0] if len(blocks_df[blocks_df["Block"]==drill]) else None)
-        if bdata is not None:
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("Population",f"{int(bdata['Population']):,}")
-            c2.metric("Literacy %",f"{bdata['Literacy_%']:.1f}%")
-            c3.metric("JJM Coverage",f"{bdata['JJM_Coverage_%']:.0f}%")
-            c4.metric("MGNREGA Delay",f"{bdata['MGNREGA_Delay_Days']:.0f} days")
-        c1,c2,c3=st.columns(3,gap="large")
-        with c1:
-            cat_b=bdf_.groupby("Category").size().reset_index(name="n")
-            cat_b["cat_s"]=cat_b["Category"].apply(lambda x:x.split("/")[0].strip())
-            fig_pb=px.pie(cat_b,values="n",names="cat_s",hole=0.52,color_discrete_sequence=[NAVY,SAFF,TEAL,RED,AMBER,GREEN,"#6B3A8A","#E87722"])
-            ct(fig_pb,f"{drill} — Category Mix",h=300)
-            fig_pb.update_layout(showlegend=False,margin=dict(t=46,b=0,l=0,r=0))
-            st.plotly_chart(fig_pb,use_container_width=True)
-        with c2:
-            pri_b=bdf_.groupby("Priority").size().reset_index(name="n")
-            fig_pr=go.Figure(go.Bar(x=pri_b["Priority"],y=pri_b["n"],
-                                    marker_color=[RED if p=="High" else AMBER if p=="Medium" else GREEN for p in pri_b["Priority"]],
-                                    text=pri_b["n"],textposition="outside",textfont=dict(color=MUTED,size=11)))
-            ct(fig_pr,f"{drill} — Priority",h=300)
-            fig_pr.update_layout(xaxis_title=None)
-            st.plotly_chart(fig_pr,use_container_width=True)
-        with c3:
-            if bdata is not None:
-                def timeliness(d): return max(0,100-((d-15)/15)*100)
-                cats_r=["Literacy","Sex Ratio/10","JJM Cover","MGNREGA OK","Res.Rate"]
-                vals=[bdata["Literacy_%"],bdata["Sex_Ratio"]/10,bdata["JJM_Coverage_%"],timeliness(bdata["MGNREGA_Delay_Days"]),len(bdf_[bdf_["Status"]=="Resolved"])/max(len(bdf_),1)*100]
-                fig_rd=go.Figure(go.Scatterpolar(r=vals+[vals[0]],theta=cats_r+[cats_r[0]],fill="toself",name=drill,line=dict(color=NAVY,width=2),fillcolor="rgba(27,55,100,.1)"))
-                fig_rd.update_layout(polar=dict(bgcolor="rgba(0,0,0,0)",radialaxis=dict(visible=True,range=[0,100],color=LGRID,gridcolor=LGRID,tickfont=dict(size=8,color=MUTED)),angularaxis=dict(color=MUTED,gridcolor=LGRID,tickfont=dict(color=MUTED))),paper_bgcolor="rgba(0,0,0,0)",title=dict(text=f"{drill} — Profile",font=dict(family="Noto Serif,serif",size=14,color=TXT)),margin=dict(t=46,b=10,l=20,r=20),height=300,showlegend=False)
-                st.plotly_chart(fig_rd,use_container_width=True)
+    # Aggregate
+    if not hilsa_fdf.empty:
+        agg_df = hilsa_fdf.groupby('Block').agg(
+            Total_Reports=('ID', 'count'),
+            High_Priority=('Priority', lambda x: (x == 'High').sum())
+        ).reset_index()
+        
+        fig = px.choropleth_mapbox(
+            agg_df, 
+            geojson=geojson_data,
+            locations="Block", 
+            featureidkey="properties.Block",
+            color="High_Priority",
+            color_continuous_scale="Reds",
+            mapbox_style="white-bg", # Hides underlying base map tiles for a clean look
+            zoom=9.5,
+            center={"lat": 25.25, "lon": 85.35},
+            hover_name="Block",
+            hover_data={"Total_Reports": True, "High_Priority": True},
+            title="Hilsa Sub-division Static Boundaries"
+        )
+        fig.update_layout(
+            margin={"r":0,"t":40,"l":0,"b":0},
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            dragmode=False # Disables panning and zooming to make it "static"
+        )
+        
+        st.markdown("<p style='color: #6B7280; font-size: 14px; margin-bottom: 10px;'>Click on a political boundary below to view detailed grievances.</p>", unsafe_allow_html=True)
+        
+        # We use on_select to capture clicks
+        selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+        
+        selected_block = None
+        if selection and 'selection' in selection and 'points' in selection['selection']:
+            points = selection['selection']['points']
+            if len(points) > 0:
+                point_index = points[0]['point_index']
+                if point_index < len(agg_df):
+                    selected_block = agg_df.iloc[point_index]['Block']
+        
+        if selected_block:
+            st.markdown(f"---")
+            st.markdown(f"<h4 style='color: #1E3A8A; font-family: \"Instrument Serif\", serif;'>Detailed Problems for {selected_block}</h4>", unsafe_allow_html=True)
+            block_data = hilsa_fdf[hilsa_fdf['Block'] == selected_block].copy()
+            # Sort by priority High to Low (High: 0, Medium: 1, Low: 2)
+            block_data['Priority_Rank'] = block_data['Priority'].map({'High': 0, 'Medium': 1, 'Low': 2})
+            block_data = block_data.sort_values(by=['Priority_Rank', 'Days_Open'], ascending=[True, False]).drop(columns=['Priority_Rank'])
+            
+            st.dataframe(block_data[['ID', 'Category', 'Priority', 'Days_Open', 'Status']], use_container_width=True, hide_index=True)
+            
+    else:
+        st.info("No reports found for Hilsa sub-division.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
