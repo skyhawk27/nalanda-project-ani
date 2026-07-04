@@ -96,6 +96,14 @@ from real_data import get_blocks_df, HILSA_STATS, BLOCK_CENSUS, JJM_COVERAGE, MG
 from classifier import classify_complaint, SCHEMA
 from image_loader import hero_css_bg
 
+@st.cache_data
+def load_hilsa_boundaries():
+    try:
+        with open("hilsa_boundaries.geojson", "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
 # ══════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
 # ══════════════════════════════════════════════════════════════════════
@@ -227,17 +235,17 @@ Return ONLY a valid JSON object — no markdown, no backticks:
 # ══════════════════════════════════════════════════════════════════════
 # THEME
 # ══════════════════════════════════════════════════════════════════════
-NAVY   = "#1B3764"
-SAFF   = "#E8751A"
-GREEN  = "#1A7A3C"
-RED    = "#C02020"
-AMBER  = "#C8820A"
-TEAL   = "#1B6B7B"
-MUTED  = "#5C5048"
-LGRID  = "#D4C9B8"
-LBG    = "#F5F3EE"
+NAVY   = "#613AF5"  # UX4G Primary Purple-Blue
+SAFF   = "#B77224"  # UX4G Warning Orange-Amber
+GREEN  = "#3C9718"  # UX4G Success Green
+RED    = "#B7131A"  # UX4G Danger Red
+AMBER  = "#B77224"  # UX4G Warning Saffron
+TEAL   = "#00AAFF"  # UX4G Info Cyan
+MUTED  = "#5E5E5E"  # UX4G Muted Gray
+LGRID  = "#dee2e6"  # UX4G Border Gray
+LBG    = "#F8F9FA"  # UX4G Light background
 WHITE  = "#FFFFFF"
-TXT    = "#1A1A2E"
+TXT    = "#212121"  # UX4G Body Text Dark
 
 def ct(fig, title="", h=None):
     kw = dict(
@@ -264,171 +272,189 @@ def ct(fig, title="", h=None):
 # ══════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&family=Noto+Serif:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap');
+@import url("https://cdn.ux4g.gov.in/UX4G@2.0.8/css/ux4g-min.css");
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&family=Noto+Serif:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;500;600&family=Fira+Code:wght@400;500&family=Instrument+Serif:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
 
 *,*::before,*::after{box-sizing:border-box}
 footer{visibility:hidden}header{visibility:hidden}.stDeployButton{display:none}
 
-.stApp{background:#F5F3EE!important}
-.main .block-container{padding:0 0 60px 0!important;max-width:100%!important}
-section[data-testid="stSidebar"]{background:#1B3764!important;border-right:2px solid #142B50!important}
-section[data-testid="stSidebar"] *{color:#C8D8F0!important}
-h1,h2,h3{font-family:'Noto Serif',serif!important;color:#1B3764!important}
+.stApp{background:#F1F3F5!important}
+.main .block-container{padding:24px 52px 60px 52px!important;max-width:100%!important}
+section[data-testid="stSidebar"]{background:#1E293B!important;border-right:1px solid #334155!important}
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] .stMarkdown *,
+section[data-testid="stSidebar"] span:not([data-testid="stMarkdownContainer"] *) {
+    color: #F8FAFC !important;
+}
+section[data-testid="stSidebar"] div[data-baseweb="select"] *,
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea {
+    color: #212121 !important;
+}
+h1,h2,h3{font-family:'Noto Sans',sans-serif!important;color:#1E293B!important;font-weight:600!important}
 
 .tricolor-strip{height:5px;background:linear-gradient(90deg,#FF9933 33%,#FFFFFF 33%,#FFFFFF 66%,#138808 66%);width:100%}
 
-.ngis-hero{position:relative;width:100%;background:#1B3764;overflow:hidden;padding:0}
-.gov-header-top{background:#1B3764;padding:10px 52px;display:flex;align-items:center;
+.ngis-hero { position: relative; width: 100%; height: 320px; overflow: hidden; border-radius: 12px; box-shadow: 0 6px 16px rgba(0,0,0,0.08); margin-bottom: 24px; }
+.ngis-hero-bg { width: 100%; height: 100%; background-size: cover; background-position: center; filter: saturate(0.85) brightness(0.95); }
+.ngis-hero-over { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.45) 50%, rgba(0,0,0,0) 100%); display: flex; align-items: flex-end; padding: 36px 52px; }
+.ngis-hero h1 { font-family: 'Instrument Serif', serif !important; font-size: 3.8rem !important; color: #FFFFFF !important; margin: 0 0 8px !important; line-height: 1.1 !important; font-weight: 600 !important; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); }
+.ngis-hero p { color: #F8F5F0 !important; font-size: 14px !important; margin: 0 !important; letter-spacing: 0.5px; font-family: 'Plus Jakarta Sans', sans-serif !important; font-weight: 500 !important; text-shadow: 1px 1px 4px rgba(0,0,0,0.6); }
+.gov-header-top{background:#613AF5;padding:10px 52px;display:flex;align-items:center;
   gap:16px;border-bottom:1px solid rgba(255,255,255,.12)}
 .gov-emblem{width:44px;height:44px;background:rgba(255,255,255,.15);border-radius:50%;
   display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
-.gov-title-hi{font-family:'Noto Sans Devanagari','Noto Serif',serif;font-size:13px;
+.gov-title-hi{font-family:'Noto Sans Devanagari','Noto Sans',sans-serif;font-size:13px;
   font-weight:600;color:#FFFFFF;letter-spacing:.3px;line-height:1.3}
 .gov-title-en{font-family:'Noto Sans',sans-serif;font-size:11px;
   color:rgba(255,255,255,.65);letter-spacing:.5px;margin-top:1px}
-.gov-page-bar{background:#142B50;padding:8px 52px;display:flex;align-items:center;gap:12px}
-.gov-page-title{font-family:'Noto Serif',serif;font-size:16px;font-weight:600;color:#FFFFFF}
+.gov-page-bar{background:#5231D1;padding:8px 52px;display:flex;align-items:center;gap:12px}
+.gov-page-title{font-family:'Noto Sans',sans-serif;font-size:16px;font-weight:600;color:#FFFFFF}
 .gov-page-sub{font-family:'Noto Sans',sans-serif;font-size:11px;
   color:rgba(255,255,255,.55);margin-left:auto;letter-spacing:.3px}
 
-.ngis-body{padding:24px 52px 0}
-.ngis-hr{height:1px;background:#D4C9B8;margin:20px 0}
+.ngis-body{padding:24px 0 0}
+.ngis-hr{height:1px;background:#dee2e6;margin:20px 0}
 
 .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
-.kpi-card{background:#FFFFFF;border:1px solid #D4C9B8;border-left:4px solid #1B3764;
-  border-radius:2px;padding:14px 16px 12px;transition:box-shadow .2s}
-.kpi-card:hover{box-shadow:0 2px 8px rgba(27,55,100,.12)}
-.kpi-card.k-red{border-left-color:#C02020}
-.kpi-card.k-green{border-left-color:#1A7A3C}
-.kpi-card.k-amb{border-left-color:#E8751A}
-.kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:1.8px;color:#8A7A6A;
+.kpi-card{background:#FFFFFF;border:1px solid #dee2e6;border-left:4px solid #613AF5;
+  border-radius:4px;padding:14px 16px 12px;transition:box-shadow .2s}
+.kpi-card:hover{box-shadow:0 4px 12px rgba(97,58,245,.08)}
+.kpi-card.k-red{border-left-color:#B7131A}
+.kpi-card.k-green{border-left-color:#3C9718}
+.kpi-card.k-amb{border-left-color:#B77224}
+.kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:1.8px;color:#5E5E5E;
   font-weight:600;font-family:'Noto Sans',sans-serif;margin-bottom:8px}
-.kpi-value{font-size:32px;font-weight:600;color:#1B3764;line-height:1;
+.kpi-value{font-size:32px;font-weight:600;color:#613AF5;line-height:1;
   font-family:'Noto Sans',sans-serif;margin-bottom:5px}
-.kpi-delta{font-size:11px;font-family:'Fira Code',monospace;color:#8A7A6A}
-.kpi-delta.up{color:#1A7A3C}.kpi-delta.down{color:#C02020}
+.kpi-delta{font-size:11px;font-family:'Fira Code',monospace;color:#5E5E5E}
+.kpi-delta.up{color:#3C9718}.kpi-delta.down{color:#B7131A}
 
-.sec-label{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:#8A7A6A;
-  font-weight:600;font-family:'Noto Sans',sans-serif;
-  padding-bottom:8px;border-bottom:2px solid #1B3764;margin-bottom:14px;
+.sec-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#613AF5;
+  font-weight:700;font-family:'Noto Sans',sans-serif;
+  padding-bottom:8px;border-bottom:2px solid #613AF5;margin-bottom:14px;
   display:flex;align-items:center;gap:6px}
 
-.reg-wrap{overflow-x:auto;border:1px solid #D4C9B8;border-radius:2px}
-.reg-table{width:100%;border-collapse:collapse;font-size:12px;font-family:'Noto Sans',sans-serif}
-.reg-table thead tr{background:#1B3764}
-.reg-table thead th{padding:8px 10px;text-align:left;color:#FFFFFF;
-  border:1px solid #142B50;font-size:10px;font-weight:600;letter-spacing:.5px;white-space:nowrap}
+.reg-wrap{overflow-x:auto;border:1px solid #dee2e6;border-radius:4px}
+.reg-table{width:100%;border-collapse:collapse;font-size:13px;font-family:'Noto Sans',sans-serif}
+.reg-table thead tr{background:#F8F9FA;border-bottom:2px solid #dee2e6}
+.reg-table thead th{padding:12px 16px;text-align:left;color:#212121;
+  border:1px solid #dee2e6;font-size:10px;font-weight:600;letter-spacing:.5px;white-space:nowrap}
 .reg-table thead th .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
   font-size:11px;font-weight:600}
 .reg-table thead th .en{display:block;font-size:9px;opacity:.7;letter-spacing:.5px;margin-top:1px}
-.reg-table tbody tr{border-bottom:1px solid #E8E0D4}
+.reg-table tbody tr{border-bottom:1px solid #dee2e6}
 .reg-table tbody tr:nth-child(odd) td{background:#FFFFFF}
-.reg-table tbody tr:nth-child(even) td{background:#F5F3EE}
-.reg-table tbody tr:hover td{background:#EBF0FA}
-.reg-table tbody td{padding:8px 10px;border-right:1px solid #E8E0D4;
-  vertical-align:middle;color:#1A1A2E}
+.reg-table tbody tr:nth-child(even) td{background:#F8F9FA}
+.reg-table tbody tr:hover td{background:#f1f3f5}
+.reg-table tbody td{padding:12px 16px;border-right:1px solid #dee2e6;
+  vertical-align:middle;color:#212121}
 .reg-table tbody td:last-child{border-right:none}
-.p-high{color:#C02020;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
-.p-med{color:#C8820A;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
-.p-low{color:#1A7A3C;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
-.age-red{color:#C02020;font-family:'Fira Code',monospace}
-.age-amb{color:#C8820A;font-family:'Fira Code',monospace}
-.age-ok{color:#8A7A6A;font-family:'Fira Code',monospace}
-.src-badge{background:#EBF0FA;color:#1B3764;border:1px solid #B8CCE8;
+.p-high{color:#B7131A;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
+.p-med{color:#B77224;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
+.p-low{color:#3C9718;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
+.age-red{color:#B7131A;font-family:'Fira Code',monospace}
+.age-amb{color:#B77224;font-family:'Fira Code',monospace}
+.age-ok{color:#5E5E5E;font-family:'Fira Code',monospace}
+.src-badge{background:#e9ecef;color:#613AF5;border:1px solid #ced4da;
   border-radius:2px;padding:1px 6px;font-size:9px;font-family:'Fira Code',monospace;white-space:nowrap}
 
-.reg-ticket{border:2px solid #1B3764;border-radius:2px;overflow:hidden;
+.reg-ticket{border:2px solid #613AF5;border-radius:4px;overflow:hidden;
   font-family:'Noto Sans',sans-serif}
-.reg-ticket-header{background:#1B3764;padding:12px 16px;text-align:center}
-.reg-ticket-h1{font-family:'Noto Sans Devanagari','Noto Serif',serif;
+.reg-ticket-header{background:#613AF5;padding:12px 16px;text-align:center}
+.reg-ticket-h1{font-family:'Noto Sans Devanagari','Noto Sans',sans-serif;
   font-size:14px;font-weight:700;color:#FFFFFF;letter-spacing:.3px}
 .reg-ticket-h2{color:rgba(255,255,255,.65);font-size:11px;margin-top:2px;letter-spacing:.5px}
-.reg-ticket-h3{color:#F5C842;font-size:12px;font-weight:600;
+.reg-ticket-h3{color:#FFC53F;font-size:12px;font-weight:600;
   margin-top:5px;font-family:'Noto Sans Devanagari',sans-serif}
 .reg-ticket table{width:100%;border-collapse:collapse}
-.reg-ticket .lbl{background:#EBF0FA;border:1px solid #D4C9B8;padding:7px 10px;
-  width:130px;font-size:10px;color:#1B3764;font-weight:600;
+.reg-ticket .lbl{background:#F8F9FA;border:1px solid #dee2e6;padding:7px 10px;
+  width:130px;font-size:10px;color:#613AF5;font-weight:600;
   text-transform:uppercase;letter-spacing:.5px;vertical-align:top}
 .reg-ticket .lbl .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
   font-size:11px;font-weight:600;text-transform:none;letter-spacing:0}
 .reg-ticket .lbl .en{display:block;font-size:9px;opacity:.65;margin-top:1px}
-.reg-ticket .val{border:1px solid #D4C9B8;padding:7px 10px;
-  font-size:12px;color:#1A1A2E;vertical-align:top;line-height:1.6}
+.reg-ticket .val{border:1px solid #dee2e6;padding:7px 10px;
+  font-size:12px;color:#212121;vertical-align:top;line-height:1.6}
 .reg-ticket .val.mono{font-family:'Fira Code',monospace}
-.reg-ticket .section-hdr{background:#1B3764;padding:5px 10px;
+.reg-ticket .section-hdr{background:#613AF5;padding:5px 10px;
   font-size:10px;font-weight:600;color:#FFFFFF;
   text-transform:uppercase;letter-spacing:1px;font-family:'Noto Sans',sans-serif}
-.prashan-row{border:1px solid #D4C9B8;padding:8px 10px;
+.prashan-row{border:1px solid #dee2e6;padding:8px 10px;
   display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.prashan-box{border:1px solid #1B3764;border-radius:1px;padding:4px 10px;
-  font-size:10px;font-weight:600;color:#1B3764;background:#EBF0FA;
+.prashan-box{border:1px solid #613AF5;border-radius:2px;padding:4px 10px;
+  font-size:10px;font-weight:600;color:#613AF5;background:#e9ecef;
   font-family:'Noto Sans',sans-serif;letter-spacing:.3px}
-.prashan-box.highlight{background:#1B3764;color:#FFFFFF}
-.pri-stamp{display:inline-block;border:2px solid;padding:3px 12px;border-radius:1px;
+.prashan-box.highlight{background:#613AF5;color:#FFFFFF}
+.pri-stamp{display:inline-block;border:2px solid;padding:3px 12px;border-radius:2px;
   font-size:11px;font-weight:700;font-family:'Noto Sans',sans-serif;
   letter-spacing:1px;text-transform:uppercase}
-.pri-high{border-color:#C02020;color:#C02020;background:#FEF0F0}
-.pri-normal{border-color:#1A7A3C;color:#1A7A3C;background:#EFF7F1}
+.pri-high{border-color:#B7131A;color:#B7131A;background:#FFEEEA}
+.pri-normal{border-color:#3C9718;color:#3C9718;background:#EDF7E6}
 
-.alert-high{background:#FEF0F0;border:1px solid #E8AAAA;border-left:4px solid #C02020;
+.alert-high{background:#FFEEEA;border:1px solid #FFCDC0;border-left:4px solid #B7131A;
   border-radius:2px;padding:10px 14px;margin-top:8px;
-  font-size:12px;font-family:'Fira Code',monospace;color:#8B1A1A;white-space:pre-wrap}
-.alert-normal{background:#EFF7F1;border:1px solid #A8D8B5;border-left:4px solid #1A7A3C;
+  font-size:12px;font-family:'Fira Code',monospace;color:#741010;white-space:pre-wrap}
+.alert-normal{background:#EDF7E6;border:1px solid #E3F2D9;border-left:4px solid #3C9718;
   border-radius:2px;padding:10px 14px;margin-top:8px;
-  font-size:12px;font-family:'Fira Code',monospace;color:#1A4A2A}
-.alert-warn{background:#FEF8EC;border:1px solid #E8D090;border-left:4px solid #C8820A;
+  font-size:12px;font-family:'Fira Code',monospace;color:#044400}
+.alert-warn{background:#FEF1E7;border:1px solid #F9D7B9;border-left:4px solid #B77224;
   border-radius:2px;padding:10px 14px;margin-top:8px;
-  font-size:12px;font-family:'Fira Code',monospace;color:#7A4A0A;white-space:pre-wrap}
-.processing-note{background:#F5F3EE;border:1px solid #D4C9B8;border-radius:2px;
+  font-size:12px;font-family:'Fira Code',monospace;color:#573000;white-space:pre-wrap}
+.processing-note{background:#F8F9FA;border:1px solid #dee2e6;border-radius:2px;
   padding:10px 12px;font-size:10px;font-family:'Fira Code',monospace;
-  color:#8A7A6A;margin-top:10px;line-height:1.8}
+  color:#5E5E5E;margin-top:10px;line-height:1.8}
 
-.brief-card{background:#FFFFFF;border:1px solid #D4C9B8;border-left:4px solid #1B3764;
+.brief-card{background:#FFFFFF;border:1px solid #dee2e6;border-left:4px solid #613AF5;
   border-radius:2px;padding:12px 16px;margin-bottom:18px;
-  font-family:'Noto Sans',sans-serif;font-size:13px;color:#1A1A2E;line-height:1.7}
+  font-family:'Noto Sans',sans-serif;font-size:13px;color:#212121;line-height:1.7}
 
-.scheme-entry{background:#FFFFFF;border:1px solid #D4C9B8;border-radius:2px;
+.scheme-entry{background:#FFFFFF;border:1px solid #dee2e6;border-radius:2px;
   overflow:hidden;margin-bottom:14px}
-.scheme-entry-header{background:#1B3764;padding:8px 12px;
+.scheme-entry-header{background:#613AF5;padding:8px 12px;
   display:flex;align-items:center;gap:8px}
-.scheme-central-tag{background:#EBF0FA;border:1px solid #B8CCE8;border-radius:2px;
-  padding:5px 9px;font-size:11px;color:#1B3764;margin-bottom:4px}
-.scheme-state-tag{background:#FEF3EB;border:1px solid #F5C89A;border-radius:2px;
-  padding:5px 9px;font-size:11px;color:#7A3A0A;margin-bottom:4px}
+.scheme-central-tag{background:#e9ecef;border:1px solid #ced4da;border-radius:2px;
+  padding:5px 9px;font-size:11px;color:#613AF5;margin-bottom:4px}
+.scheme-state-tag{background:#FEF1E7;border:1px solid #F9D7B9;border-radius:2px;
+  padding:5px 9px;font-size:11px;color:#573000;margin-bottom:4px}
 .jur-chain-light{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
-.jur-step-light{background:#EBF0FA;color:#1B3764;padding:3px 8px;border-radius:2px;
-  font-size:10px;font-weight:600;font-family:'Fira Code',monospace;border:1px solid #B8CCE8}
+.jur-step-light{background:#e9ecef;color:#613AF5;padding:3px 8px;border-radius:2px;
+  font-size:10px;font-weight:600;font-family:'Fira Code',monospace;border:1px solid #ced4da}
 
 .stTabs [data-baseweb="tab-list"]{background:#FFFFFF!important;
-  border-bottom:2px solid #1B3764!important;gap:0!important}
-.stTabs [data-baseweb="tab"]{color:#8A7A6A!important;font-family:'Noto Sans',sans-serif!important;
+  border-bottom:2px solid #613AF5!important;gap:0!important}
+.stTabs [data-baseweb="tab"]{color:#5E5E5E!important;font-family:'Noto Sans',sans-serif!important;
   font-size:13px!important;font-weight:500!important;padding:10px 22px!important;
   border-bottom:2px solid transparent!important}
-.stTabs [aria-selected="true"]{color:#1B3764!important;border-bottom-color:#1B3764!important;
+.stTabs [aria-selected="true"]{color:#613AF5!important;border-bottom-color:#613AF5!important;
   background:transparent!important;font-weight:600!important}
-.stButton>button{background:#1B3764!important;color:#FFFFFF!important;
+.stButton>button{background:#613AF5!important;color:#FFFFFF!important;
   font-weight:600!important;font-family:'Noto Sans',sans-serif!important;
-  border:none!important;border-radius:2px!important;letter-spacing:.3px!important}
-.stButton>button:hover{background:#E8751A!important}
+  border:none!important;border-radius:4px!important;letter-spacing:.3px!important}
+.stButton>button:hover{background:#774BFF!important}
 .stSelectbox>div>div,.stTextArea textarea,.stTextInput input{
-  background:#FFFFFF!important;border-color:#D4C9B8!important;
-  color:#1A1A2E!important;font-family:'Noto Sans',sans-serif!important;
-  font-size:13px!important;border-radius:2px!important}
+  background:#FFFFFF!important;border-color:#dee2e6!important;
+  color:#212121!important;font-family:'Noto Sans',sans-serif!important;
+  font-size:13px!important;border-radius:4px!important}
 div[data-testid="metric-container"]{background:#FFFFFF!important;
-  border:1px solid #D4C9B8!important;border-left:4px solid #1B3764!important;
-  border-radius:2px!important;padding:12px 14px!important}
-[data-testid="metric-container"] label{color:#8A7A6A!important;
+  border:1px solid #dee2e6!important;border-left:4px solid #613AF5!important;
+  border-radius:4px!important;padding:12px 14px!important}
+[data-testid="metric-container"] label{color:#5E5E5E!important;
   font-family:'Noto Sans',sans-serif!important;font-size:9px!important;
   text-transform:uppercase!important;letter-spacing:1.5px!important}
 [data-testid="metric-container"] [data-testid="metric-value"]{
-  color:#1B3764!important;font-weight:600!important}
+  color:#613AF5!important;font-weight:600!important}
 .stDataFrame{font-family:'Fira Code',monospace!important;font-size:11px!important}
-.streamlit-expanderHeader{background:#F5F3EE!important;border:1px solid #D4C9B8!important;
-  font-family:'Noto Sans',sans-serif!important;color:#1B3764!important;border-radius:2px!important}
-.streamlit-expanderContent{background:#FFFFFF!important;border:1px solid #D4C9B8!important;
+.streamlit-expanderHeader{background:#F8F9FA!important;border:1px solid #dee2e6!important;
+  font-family:'Noto Sans',sans-serif!important;color:#613AF5!important;border-radius:4px!important}
+.streamlit-expanderContent{background:#FFFFFF!important;border:1px solid #dee2e6!important;
   border-top:none!important}
-.stSpinner>div{border-color:#1B3764 transparent transparent transparent!important}
-.stRadio label{color:#1A1A2E!important;font-family:'Noto Sans',sans-serif!important}
+.stSpinner>div{border-color:#613AF5 transparent transparent transparent!important}
+.stRadio label{color:#212121!important;font-family:'Noto Sans',sans-serif!important}
 </style>
 """, unsafe_allow_html=True)
 
@@ -482,17 +508,17 @@ with st.sidebar:
         <div style='width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:50%;
              display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0'>⚖</div>
         <div>
-          <div style='font-family:Noto Sans Devanagari,Noto Serif,serif;font-size:13px;
+          <div style='font-family:Noto Sans Devanagari,Noto Sans,sans-serif;font-size:13px;
                font-weight:700;color:#FFFFFF;line-height:1.2'>बिहार सरकार</div>
-          <div style='font-size:9px;color:rgba(255,255,255,.55);letter-spacing:1px;
+          <div style='font-size:9px;color:rgba(255,255,255,.7);letter-spacing:1px;
                text-transform:uppercase;margin-top:1px'>Government of Bihar</div>
         </div>
       </div>
-      <div style='margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.12)'>
-        <div style='font-family:Noto Sans,sans-serif;font-size:12px;font-weight:600;color:#F5C842'>NGIS</div>
-        <div style='font-size:9px;color:rgba(255,255,255,.45);letter-spacing:.5px;
+      <div style='margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15)'>
+        <div style='font-family:Noto Sans,sans-serif;font-size:12px;font-weight:600;color:#FFC53F'>NGIS</div>
+        <div style='font-size:9px;color:rgba(255,255,255,.75);letter-spacing:.5px;
              font-family:Noto Sans,sans-serif'>Nalanda Grievance Intelligence System</div>
-        <div style='font-size:10px;color:rgba(255,255,255,.35);margin-top:2px;
+        <div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:2px;
              font-family:Fira Code,monospace'>Hilsa Sub-Division · Nalanda</div>
       </div>
     </div>""", unsafe_allow_html=True)
@@ -505,20 +531,21 @@ with st.sidebar:
         icons=["grid-fill","bar-chart-fill","camera-fill","building-fill"],
         default_index=0,
         styles={
-            "container":         {"padding":"4px 8px","background":"transparent"},
-            "icon":              {"color":"#F5C842","font-size":"14px"},
-            "nav-link":          {"font-size":"13px","color":"rgba(255,255,255,.55)",
-                                  "font-family":"Noto Sans","padding":"9px 12px",
-                                  "margin-bottom":"2px","border-radius":"2px"},
-            "nav-link-selected": {"background":"rgba(255,255,255,.12)","color":"#FFFFFF","font-weight":"600"},
+            "container":         {"padding":"0px 4px","background-color":"#1E293B","backgroundColor":"#1E293B"},
+            "icon":              {"color":"#FFC53F","font-size":"14px"},
+            "nav-link":          {"font-size":"13px","color":"rgba(255,255,255,.85)",
+                                  "font-family":"Noto Sans","padding":"10px 14px",
+                                  "margin-bottom":"4px","border-radius":"6px",
+                                  "background-color":"rgba(255,255,255,.05)","backgroundColor":"rgba(255,255,255,.05)"},
+            "nav-link-selected": {"background-color":"#613AF5","backgroundColor":"#613AF5","color":"#FFFFFF","font-weight":"600"},
         },
     )
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:1px;background:rgba(255,255,255,.12);margin:0 -8px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1px;background:rgba(255,255,255,.15);margin:0 -8px'></div>", unsafe_allow_html=True)
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:5px'>Gemini API Key</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:5px'>Gemini API Key</div>", unsafe_allow_html=True)
     raw_key = st.text_input("Gemini API Key", type="password", placeholder="AIza…",
                              value=st.session_state.get("gemini_key",""), label_visibility="collapsed")
     if raw_key and raw_key.strip():
@@ -528,19 +555,19 @@ with st.sidebar:
     else:
         st.session_state["gemini_key"] = ""
         st.markdown("<div style='font-size:10px;color:#F4A0A3;font-family:Fira Code,monospace;padding-left:4px'>⚠ No key — OCR disabled</div>", unsafe_allow_html=True)
-        st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.25);font-family:Fira Code,monospace;padding-left:4px;margin-top:3px'>aistudio.google.com/apikey</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.4);font-family:Fira Code,monospace;padding-left:4px;margin-top:3px'>aistudio.google.com/apikey</div>", unsafe_allow_html=True)
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:1px;background:rgba(255,255,255,.12);margin:0 -8px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1px;background:rgba(255,255,255,.15);margin:0 -8px'></div>", unsafe_allow_html=True)
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:6px'>फ़िल्टर · Filters</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:6px'>फ़िल्टर · Filters</div>", unsafe_allow_html=True)
     gp = st.selectbox("Priority", ["All","High","Medium","Low"], label_visibility="collapsed")
     gb = st.selectbox("Block", ["All"]+sorted(df["Block"].unique().tolist()), label_visibility="collapsed")
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     now = datetime.now()
-    st.markdown(f"<div style='font-family:Fira Code,monospace;font-size:10px;color:rgba(255,255,255,.25);line-height:2;padding-left:4px'>{now.strftime('%d %b %Y  %H:%M')}<br>जनसंख्या: 1,97,309<br>क्षेत्र: 140 km²<br>ग्राम: 56 · प्रखंड: 20</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-family:Fira Code,monospace;font-size:10px;color:rgba(255,255,255,.6);line-height:2;padding-left:4px'>{now.strftime('%d %b %Y  %H:%M')}<br>जनसंख्या: 1,97,309<br>क्षेत्र: 140 km²<br>ग्राम: 56 · प्रखंड: 20</div>", unsafe_allow_html=True)
 
 fdf = df.copy()
 if gp != "All": fdf = fdf[fdf["Priority"]==gp]
@@ -553,20 +580,18 @@ if gb != "All": fdf = fdf[fdf["Block"]==gb]
 if selected == "Today's Brief":
 
     st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
+    bg1 = hero_css_bg("nalanda_ruins")
     st.markdown(f"""
     <div class="ngis-hero">
-      <div class="gov-header-top">
-        <div class="gov-emblem">⚖</div>
+      <div class="ngis-hero-bg" style="background-image:{bg1};position:absolute;inset:0"></div>
+      <div class="ngis-hero-over">
         <div>
-          <div class="gov-title-hi">अनुमंडल कार्यालय, हिलसा (नालंदा) — जनता दरबार नियंत्रण केंद्र</div>
-          <div class="gov-title-en">Sub-Divisional Office, Hilsa (Nalanda) · Janata Darbar Command Center</div>
+          <h1>Today's Brief</h1>
+          <p>Live grievance status · Nalanda District · {datetime.now().strftime("%d %B %Y, %A")}</p>
         </div>
       </div>
-      <div class="gov-page-bar">
-        <div class="gov-page-title">आज का विवरण · Today's Brief</div>
-        <div class="gov-page-sub">शिकायत प्रबंधन प्रणाली · {datetime.now().strftime("%d %B %Y, %A")}</div>
-      </div>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
@@ -693,12 +718,7 @@ elif selected == "Analytics Suite":
     hilsa_fdf = fdf[fdf['Block'].isin(hilsa_blocks)].copy()
     
     # Load boundaries
-    import json
-    try:
-        with open("hilsa_boundaries.geojson", "r") as f:
-            geojson_data = json.load(f)
-    except:
-        geojson_data = {}
+    geojson_data = load_hilsa_boundaries()
 
     # Aggregate
     if not hilsa_fdf.empty:
@@ -762,20 +782,18 @@ elif selected == "Analytics Suite":
 # ══════════════════════════════════════════════════════════════════════
 elif selected == "Field Capture":
     st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
+    bg3 = hero_css_bg("pawapuri")
     st.markdown(f"""
     <div class="ngis-hero">
-      <div class="gov-header-top">
-        <div class="gov-emblem">📋</div>
+      <div class="ngis-hero-bg" style="background-image:{bg3};position:absolute;inset:0"></div>
+      <div class="ngis-hero-over">
         <div>
-          <div class="gov-title-hi">जनता दरबार शिकायत पत्रावली — डिजिटल प्रविष्टि केंद्र</div>
-          <div class="gov-title-en">Janata Darbar Grievance Register — Digital Entry Terminal</div>
+          <h1>Field Capture</h1>
+          <p>Janata Darbar digitization terminal · Gemini OCR · auto-classification · digital register</p>
         </div>
       </div>
-      <div class="gov-page-bar">
-        <div class="gov-page-title">Field Digitization Terminal</div>
-        <div class="gov-page-sub">Gemini OCR · Auto-classify · Register format output · HEIC/JPG/PNG</div>
-      </div>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
     input_mode=st.radio("Input Mode",["📷  Scan Letter (Image)","✍️  Type / Paste Text"],horizontal=True,label_visibility="collapsed")
@@ -1029,20 +1047,18 @@ elif selected == "Field Capture":
 # ══════════════════════════════════════════════════════════════════════
 elif selected == "Scheme Intelligence":
     st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
+    bg4 = hero_css_bg("nalanda_monument")
     st.markdown(f"""
     <div class="ngis-hero">
-      <div class="gov-header-top">
-        <div class="gov-emblem">🏛</div>
+      <div class="ngis-hero-bg" style="background-image:{bg4};position:absolute;inset:0"></div>
+      <div class="ngis-hero-over">
         <div>
-          <div class="gov-title-hi">योजना मानचित्रण — केंद्रीय एवं राज्य सरकार</div>
-          <div class="gov-title-en">Scheme Mapping — Central &amp; State Government + NITI Aayog</div>
+          <h1>Scheme Intelligence</h1>
+          <p>Scheme mapping · SLA targets · jurisdiction escalation chains · NITI Aayog indicators</p>
         </div>
       </div>
-      <div class="gov-page-bar">
-        <div class="gov-page-title">Scheme Intelligence</div>
-        <div class="gov-page-sub">9 categories · SLA reference · Jurisdiction chains · NITI Aayog indicators</div>
-      </div>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
     st.markdown('<div class="sec-label">सभी 9 श्रेणियां — योजना मानचित्रण · All 9 Categories — Scheme Mapping</div>', unsafe_allow_html=True)
 
