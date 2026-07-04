@@ -1,4 +1,5 @@
 import json
+# pyrefly: ignore [missing-import]
 from geopy.geocoders import Nominatim
 import time
 
