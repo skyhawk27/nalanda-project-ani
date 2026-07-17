@@ -1,0 +1,14 @@
+# Theme only — no behavioural settings.
+#
+# This is load-bearing for the design, not cosmetic duplication of the CSS:
+# Streamlit paints custom-component iframes (e.g. streamlit-option-menu) with
+# the *theme's* secondaryBackgroundColor. Injected CSS cannot cross into those
+# iframes, so without this the sidebar nav renders on a #F0F2F6 white slab no
+# matter what the stylesheet says. secondaryBackgroundColor is matched to the
+# sidebar surface so the nav iframe blends invisibly.
+[theme]
+base                     = "light"
+primaryColor             = "#C3532D"  # Madhubani terracotta (heritage palette)
+backgroundColor          = "#F4E7C8"  # parchment — matches splash canvas
+secondaryBackgroundColor = "#EFE2C2"  # == sidebar surface; see note above
+textColor                = "#33210F"

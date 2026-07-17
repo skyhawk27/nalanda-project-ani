@@ -12,6 +12,7 @@ import io
 import time
 import warnings
 import html as _html  # ← for safe escaping of dynamic values into HTML
+from splash import render_splash, corner_svg_static, fish_svg_static
 
 # ══════════════════════════════════════════════════════════════════════
 # HEIC SUPPORT
@@ -113,6 +114,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── THE THRESHOLD — Madhubani splash, once per session ────────────────
+# Gate sits BEFORE the master CSS block so the splash owns the whole
+# cascade; st.stop() fires before the sidebar is built, so none exists.
+if not st.session_state.get("entered", False):
+    render_splash()
+    st.stop()
 
 # ══════════════════════════════════════════════════════════════════════
 # GEMINI
@@ -235,32 +243,46 @@ Return ONLY a valid JSON object — no markdown, no backticks:
 # ══════════════════════════════════════════════════════════════════════
 # THEME
 # ══════════════════════════════════════════════════════════════════════
-NAVY   = "#613AF5"  # UX4G Primary Purple-Blue
-SAFF   = "#B77224"  # UX4G Warning Orange-Amber
-GREEN  = "#3C9718"  # UX4G Success Green
-RED    = "#B7131A"  # UX4G Danger Red
-AMBER  = "#B77224"  # UX4G Warning Saffron
-TEAL   = "#00AAFF"  # UX4G Info Cyan
-MUTED  = "#5E5E5E"  # UX4G Muted Gray
-LGRID  = "#dee2e6"  # UX4G Border Gray
-LBG    = "#F8F9FA"  # UX4G Light background
-WHITE  = "#FFFFFF"
-TXT    = "#212121"  # UX4G Body Text Dark
+# The Manuscript Console — Madhubani heritage palette on parchment,
+# shared with the splash (splash.py heritage tokens). Constant NAMES are
+# historical (from the retired dark console) so every existing call site
+# re-themes for free; only the values changed.
+NAVY   = "#C3532D"  # Primary terracotta (splash --sp-terracotta)
+SAFF   = "#E9A21B"  # Heritage saffron — decorative fills/rules, never text
+GREEN  = "#4F7C3A"  # Success (splash leaf)
+RED    = "#93312B"  # Danger (splash madder)
+AMBER  = "#E9A21B"  # Warning
+TEAL   = "#2C4B8F"  # Info (splash indigo)
+MUTED  = "#847460"  # Muted ink (ink at ~58% over parchment)
+LGRID  = "#DCCEB1"  # Hairline grid on parchment
+LBG    = "#F9F0DC90" # Translucent surface
+WHITE  = "#33210F"  # Primary text = manuscript ink (name historical)
+TXT    = "#33210F"  # Body text
+
+# Parchment canvas tokens
+INK    = "#F4E7C8"  # Canvas (name historical — was the dark ink background)
+SURF   = "#F9F0DC"  # Raised paper surface
+GLASS  = "rgba(51,33,15,.05)"
+HAIR   = "rgba(51,33,15,.16)"
 
 def ct(fig, title="", h=None):
     kw = dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=MUTED, family="'Noto Sans', sans-serif", size=11),
-        title=dict(text=title, font=dict(family="'Noto Serif', serif", size=14, color=TXT),
+        font=dict(color=MUTED, family="'Plus Jakarta Sans', sans-serif", size=11),
+        title=dict(text=title, font=dict(family="'Instrument Serif', serif", size=17, color=WHITE),
                    x=0, xanchor="left") if title else {},
-        xaxis=dict(gridcolor=LGRID, linecolor=LGRID, tickcolor=MUTED, tickfont=dict(size=10)),
-        yaxis=dict(gridcolor=LGRID, linecolor=LGRID, tickcolor=MUTED, tickfont=dict(size=10)),
+        xaxis=dict(gridcolor=LGRID, linecolor=LGRID, tickcolor=MUTED, tickfont=dict(size=10),
+                   zerolinecolor=LGRID),
+        yaxis=dict(gridcolor=LGRID, linecolor=LGRID, tickcolor=MUTED, tickfont=dict(size=10),
+                   zerolinecolor=LGRID),
         margin=dict(t=46 if title else 14, b=14, l=8, r=8),
         legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(0,0,0,0)",
                     font=dict(color=MUTED, size=11), orientation="h",
                     yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hoverlabel=dict(bgcolor=WHITE, bordercolor=LGRID, font=dict(color=TXT)),
+        hoverlabel=dict(bgcolor="#F9F0DC", bordercolor=NAVY,
+                        font=dict(color=WHITE, family="'Fira Code', monospace")),
+        colorway=[NAVY, TEAL, SAFF, GREEN, RED, "#5B79C4"],
     )
     if h: kw["height"] = h
     fig.update_layout(**kw)
@@ -268,195 +290,834 @@ def ct(fig, title="", h=None):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# CSS  (unchanged from document 7)
+# DESIGN SYSTEM — "The Manuscript Console"
+# Presentation only. No markup below carries data or logic.
+#
+# Direction: the splash's Madhubani manuscript extends across the whole
+# app — parchment canvas, manuscript ink, terracotta/madder/indigo/saffron
+# accents, double-line frame and corner spirals carried in from splash.py.
+# Supersedes the Midnight Command Console (dark) system, 2026-07-17.
+#
+# Token NAMES are historical (--ink, --violet, --cyan …) so the hundreds of
+# var() call sites re-theme for free; only the VALUES changed. Contrast
+# rules: ink on parchment ≈ 11:1; madder for small accent text; terracotta
+# for large text/UI; saffron is decorative only (rules, fills — never text).
+#
+# Streamlit constraints this works within:
+#   · st.markdown is sanitised by DOMPurify — <script> never executes.
+#   · components.html is iframed and wiped on every rerun.
+# So all motion is CSS. Content entrances are TIME-based (guaranteed to
+# finish visible); scroll-driven timelines are used ONLY for decoration,
+# where non-support degrades to "no motion" and never to "no content".
 # ══════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url("https://cdn.ux4g.gov.in/UX4G@2.0.8/css/ux4g-min.css");
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&family=Noto+Serif:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;500;600&family=Fira+Code:wght@400;500&family=Instrument+Serif:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital,wght@0,400;1,400&family=Noto+Serif+Devanagari:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@200;300;400;500;600;700;800&family=Fira+Code:wght@400;500;600&display=swap');
+
+/* ── Registered properties: enable true numeric interpolation ──
+   Fallback contract: every element also declares --kpi-n inline, so if
+   @property is unsupported the counter still resolves to the real value. */
+@property --kpi-n   { syntax:'<integer>'; initial-value:0; inherits:false }
+@property --ring-a  { syntax:'<angle>';   initial-value:0deg; inherits:false }
+@property --glow    { syntax:'<number>';  initial-value:0; inherits:false }
+
+:root{
+  --ink:#F4E7C8; --ink-2:#EAD7AE; --surf:#F9F0DC; --surf-2:#EFE2C2;
+  --violet:#C3532D; --violet-dim:#93312B; --cyan:#2C4B8F;
+  --saffron:#E9A21B; --green:#4F7C3A; --red:#93312B;
+  --tx:#33210F; --tx-dim:rgba(51,33,15,.78); --tx-mute:rgba(51,33,15,.58);
+  --hair:rgba(51,33,15,.16); --hair-2:rgba(51,33,15,.09);
+  --glass:rgba(51,33,15,.05); --glass-2:rgba(51,33,15,.03);
+
+  /* splash heritage tokens — let motif SVGs from splash.py render as-is */
+  --sp-ink:#33210F; --sp-terracotta:#C3532D; --sp-madder:#93312B;
+  --sp-indigo:#2C4B8F; --sp-saffron:#E9A21B; --sp-leaf:#4F7C3A;
+
+  --e-out:cubic-bezier(.16,1,.3,1);
+  --e-back:cubic-bezier(.34,1.56,.64,1);
+  --e-soft:cubic-bezier(.4,0,.2,1);
+  --d-fast:150ms; --d:280ms; --d-slow:520ms;
+
+  --r:14px; --r-sm:8px; --r-lg:20px;
+}
 
 *,*::before,*::after{box-sizing:border-box}
 footer{visibility:hidden}header{visibility:hidden}.stDeployButton{display:none}
+#MainMenu{visibility:hidden}
 
-.stApp{background:#F1F3F5!important}
-.main .block-container{padding:24px 52px 60px 52px!important;max-width:100%!important}
-section[data-testid="stSidebar"]{background:#1E293B!important;border-right:1px solid #334155!important}
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3,
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] .stMarkdown *,
-section[data-testid="stSidebar"] span:not([data-testid="stMarkdownContainer"] *) {
-    color: #F8FAFC !important;
+/* ══ CANVAS ══════════════════════════════════════════════════════════ */
+.stApp{background:var(--ink)!important;color:var(--tx)}
+
+/* Parchment bloom + vignette — same field as the splash stage (static) */
+[data-testid="stAppViewContainer"]::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(90% 70% at 50% 30%, #F7EDD6 0%, transparent 60%),
+    radial-gradient(120% 95% at 50% 42%, transparent 55%,
+      rgba(147,49,43,.05) 78%, rgba(51,33,15,.13) 100%);
+}
+/* Film grain — the splash's parchment tooth, multiplied into the paper */
+[data-testid="stAppViewContainer"]::after{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.16;
+  mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* Double-line manuscript frame — the splash border, carried in. Fixed,
+   decorative, pointer-transparent; ink outer pass, terracotta inner. */
+.stApp::before{
+  content:"";position:fixed;inset:9px;z-index:120;pointer-events:none;
+  border:1.5px solid rgba(51,33,15,.4);
+}
+.stApp::after{
+  content:"";position:fixed;inset:14px;z-index:120;pointer-events:none;
+  border:1px solid rgba(195,83,45,.35);
+}
+/* Corner spirals (splash _corner_svg, rendered static) */
+.ms-corner{position:fixed;width:64px;height:64px;z-index:121;
+  pointer-events:none;opacity:.5}
+.ms-corner svg{width:100%;height:100%;display:block}
+.ms-c-tl{top:20px;left:20px}
+.ms-c-tr{top:20px;right:20px;transform:rotate(90deg)}
+.ms-c-br{bottom:20px;right:20px;transform:rotate(180deg)}
+.ms-c-bl{bottom:20px;left:20px;transform:rotate(270deg)}
+/* Splash motifs arrive pre-drawn: neutralise the draw/fill choreography
+   classes (their keyframes live only in splash CSS) */
+.ms-motif-static .d{stroke-dasharray:none}
+.ms-motif-static .f{fill-opacity:var(--fo,1)}
+.main .block-container{
+  padding:0 46px 90px!important;max-width:1560px!important;
+  position:relative;z-index:1;
+}
+
+/* ══ TYPOGRAPHY ══════════════════════════════════════════════════════ */
+html,body,[class*="css"]{font-family:'Plus Jakarta Sans',sans-serif}
+h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
+.stMarkdown p{color:var(--tx-dim)}
+.dv{font-family:'Noto Serif Devanagari','Noto Sans Devanagari',serif}
+
+/* ══ MASTHEAD ════════════════════════════════════════════════════════ */
+.ngis-mast{
+  display:flex;align-items:flex-end;justify-content:space-between;gap:24px;
+  padding:26px 2px 18px;border-bottom:1px solid var(--hair);
+  margin-bottom:26px;position:relative;
+  animation:fade-down 700ms var(--e-out) both;
+}
+.ngis-mast::after{
+  content:"";position:absolute;left:0;bottom:-1px;height:2px;width:100%;
+  background:linear-gradient(90deg,var(--saffron),var(--violet),transparent 72%);
+  transform:scaleX(0);transform-origin:left;
+  animation:draw-x 1100ms var(--e-out) 260ms both;
+}
+.mast-l{display:flex;align-items:center;gap:16px}
+.mast-seal{
+  width:46px;height:46px;border-radius:50%;flex-shrink:0;
+  display:grid;place-items:center;font-size:21px;
+  background:conic-gradient(from var(--ring-a),var(--violet),var(--cyan),var(--saffron),var(--violet));
+  animation:ring-spin 9s linear infinite;
+  position:relative;
+}
+.mast-seal::before{
+  content:"";position:absolute;inset:2px;border-radius:50%;background:var(--surf);
+}
+.mast-seal span{position:relative;z-index:1}
+.mast-hi{
+  font-family:'Noto Serif Devanagari',serif;font-size:30px;font-weight:600;
+  letter-spacing:-.5px;
+  background:linear-gradient(92deg,var(--tx) 8%,var(--violet-dim) 52%,var(--violet) 96%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  background-size:220% 100%;
+  animation:sheen-text 7s var(--e-soft) infinite;
+  /* Devanagari matras (anusvara, ि, े …) sit ABOVE the em box. With
+     background-clip:text + color:transparent, anything outside the element's
+     background box paints nothing — line-height:1 silently ate the bindu in
+     नालंदा. Latin never exposes this; the line box must clear the matras. */
+  line-height:1.5;
+  padding-top:.06em;
+}
+.mast-en{
+  font-size:9.5px;letter-spacing:5.5px;text-transform:uppercase;
+  color:var(--tx-mute);margin-top:6px;font-weight:600;
+}
+.mast-r{text-align:right;font-family:'Fira Code',monospace;font-size:10px;
+  color:var(--tx-mute);line-height:1.9;letter-spacing:.4px}
+.mast-r b{color:var(--saffron);font-weight:500}
+.mast-live{display:inline-flex;align-items:center;gap:6px;color:var(--green)}
+.mast-live i{
+  width:6px;height:6px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 0 0 rgba(79,124,58,.7);animation:beat 2s var(--e-soft) infinite;
+}
+
+/* ══ TRICOLOUR ═══════════════════════════════════════════════════════ */
+.tricolor-strip{
+  height:3px;width:100%;position:relative;overflow:hidden;border-radius:2px;
+  /* heritage strip — the splash's tick-strip colours, not the flag
+     (the flag's white band vanishes on parchment) */
+  background:linear-gradient(90deg,var(--violet) 0 33%,var(--saffron) 33% 66%,var(--cyan) 66% 100%);
+  opacity:.85;transform-origin:left;
+  animation:draw-x 800ms var(--e-out) both;
+}
+.tricolor-strip::after{
+  content:"";position:absolute;inset:0;width:34%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+  animation:sheen 3.6s var(--e-soft) 900ms infinite;
+}
+
+/* ══ HERO ════════════════════════════════════════════════════════════ */
+/* The hero is a dark photographic PLATE set into the parchment page —
+   like a tipped-in plate in a manuscript. Overlay text stays light, so
+   its colours are pinned here (the --tx tokens are ink now). */
+.ngis-hero{
+  position:relative;width:100%;height:390px;overflow:hidden;
+  border-radius:var(--r-lg);margin:18px 0 30px;
+  border:1px solid rgba(51,33,15,.45);
+  box-shadow:0 24px 60px -22px rgba(51,33,15,.55), 0 0 0 4px var(--surf), 0 0 0 5px rgba(51,33,15,.25);
+  animation:hero-in 900ms var(--e-out) both;
+  isolation:isolate;
+}
+.ngis-hero-bg{
+  width:100%;height:100%;background-size:cover;background-position:center;
+  filter:saturate(.6) contrast(1.05) brightness(.66) sepia(.28);
+  transform-origin:center;
+  animation:ken 30s var(--e-soft) infinite alternate;
+  will-change:transform;
+}
+/* Duotone wash — unifies four unrelated photographs into one palette */
+.ngis-hero::before{
+  content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:
+    linear-gradient(105deg, rgba(26,16,9,.96) 0%, rgba(51,33,15,.78) 42%, rgba(195,83,45,.32) 78%, rgba(233,162,27,.24) 100%);
+  mix-blend-mode:multiply;
+}
+.ngis-hero::after{
+  content:"";position:absolute;inset:0;z-index:2;pointer-events:none;
+  background:
+    radial-gradient(90% 130% at 0% 100%, rgba(147,49,43,.28), transparent 62%),
+    linear-gradient(0deg, rgba(26,16,9,.9) 0%, transparent 55%);
+}
+.ngis-hero-over{
+  position:absolute;inset:0;z-index:3;display:flex;align-items:flex-end;
+  padding:44px 48px;
+}
+.hero-kicker{
+  display:inline-flex;align-items:center;gap:9px;margin-bottom:16px;
+  padding:6px 13px;border-radius:100px;
+  border:1px solid rgba(244,231,200,.28);
+  background:rgba(244,231,200,.09);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  font-family:'Fira Code',monospace;font-size:9.5px;letter-spacing:2.4px;
+  text-transform:uppercase;color:#EAD7AE;
+  animation:fade-up 700ms var(--e-out) 180ms both;
+}
+.hero-kicker i{width:5px;height:5px;border-radius:50%;background:var(--saffron);
+  box-shadow:0 0 10px var(--saffron);animation:beat 2.4s var(--e-soft) infinite}
+.ngis-hero h1{
+  font-family:'Instrument Serif',serif!important;
+  font-size:clamp(2.6rem,5vw,4.4rem)!important;font-weight:400!important;
+  line-height:.98!important;letter-spacing:-1.6px!important;margin:0 0 6px!important;
+  color:#F7EDD6!important;
+  animation:fade-up 800ms var(--e-out) 300ms both;
+}
+.ngis-hero .hero-hi{
+  display:block;font-family:'Noto Serif Devanagari',serif;
+  font-size:clamp(1.1rem,1.7vw,1.55rem);font-weight:500;
+  letter-spacing:0;margin-bottom:8px;
+  background:linear-gradient(92deg,var(--saffron),#FFD59B 60%,var(--saffron));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:fade-up 800ms var(--e-out) 220ms both;
+  line-height:1.55;   /* clears Devanagari matras — see .mast-hi */
+}
+.ngis-hero p{
+  color:rgba(244,231,200,.85)!important;font-size:13px!important;margin:10px 0 0!important;
+  letter-spacing:.5px;max-width:62ch;line-height:1.7;
+  animation:fade-up 800ms var(--e-out) 420ms both;
+}
+.hero-rule{
+  height:2px;width:0;margin:16px 0 0;
+  background:linear-gradient(90deg,var(--saffron),rgba(233,162,27,.4),transparent);
+  animation:rule-grow 1200ms var(--e-out) 520ms both;
+}
+/* Decorative parallax only — if scroll timelines are unsupported this is
+   simply absent; no content depends on it. */
+@supports (animation-timeline: view()){
+  .ngis-hero-bg{
+    animation:ken 30s var(--e-soft) infinite alternate, hero-drift linear both;
+    animation-timeline:auto, view();
+    animation-range:normal, entry 0% exit 100%;
+  }
+}
+
+/* ══ PAPER PRIMITIVE ═════════════════════════════════════════════════
+   Cards are raised paper leaves on the parchment — no glass, no blur. */
+.brief-card,.kpi-card,.reg-wrap,.scheme-entry,.reg-ticket,.processing-note{
+  background:var(--surf)!important;
+  border:1px solid var(--hair)!important;
+  box-shadow:0 6px 22px -12px rgba(51,33,15,.28);
+}
+
+.brief-card{
+  border-radius:var(--r)!important;border-left:2px solid var(--violet)!important;
+  padding:16px 20px!important;color:var(--tx-dim)!important;font-size:13px!important;
+  line-height:1.8!important;margin-bottom:24px!important;
+  animation:fade-up var(--d-slow) var(--e-out) 120ms both;
+  transition:transform var(--d) var(--e-soft),box-shadow var(--d) var(--e-soft);
+}
+.brief-card:hover{transform:translateY(-2px);box-shadow:0 18px 44px -18px rgba(51,33,15,.4)}
+.brief-card strong{color:var(--tx)!important}
+
+/* ══ KPI ═════════════════════════════════════════════════════════════ */
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:30px}
+.kpi-card{
+  position:relative;overflow:hidden;border-radius:var(--r)!important;
+  padding:20px 20px 18px!important;
+  border-left:1px solid var(--hair)!important;
+  animation:pop-in 620ms var(--e-back) both;
+  transition:transform var(--d) var(--e-soft),box-shadow var(--d) var(--e-soft),
+             border-color var(--d) var(--e-soft);
+}
+.kpi-row .kpi-card:nth-child(1){animation-delay:180ms}
+.kpi-row .kpi-card:nth-child(2){animation-delay:250ms}
+.kpi-row .kpi-card:nth-child(3){animation-delay:320ms}
+.kpi-row .kpi-card:nth-child(4){animation-delay:390ms}
+/* Accent seam */
+.kpi-card::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
+  background:linear-gradient(180deg,var(--violet),transparent);
+  transform:scaleY(0);transform-origin:top;
+  animation:draw-y 800ms var(--e-out) 520ms both;
+}
+.kpi-card.k-red::before{background:linear-gradient(180deg,var(--red),transparent)}
+.kpi-card.k-green::before{background:linear-gradient(180deg,var(--green),transparent)}
+.kpi-card.k-amb::before{background:linear-gradient(180deg,var(--saffron),transparent)}
+/* Cursor-tracked bloom is impossible without JS; a static top bloom reads
+   the same at rest and costs nothing. */
+.kpi-card::after{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:radial-gradient(60% 90% at 50% 0%, rgba(195,83,45,.14), transparent 70%);
+  transition:opacity var(--d-slow) var(--e-soft);
+}
+.kpi-card:hover::after{opacity:1}
+.kpi-card.k-red:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(147,49,43,.14), transparent 70%)}
+.kpi-card.k-green:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(79,124,58,.14), transparent 70%)}
+.kpi-card.k-amb:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(233,162,27,.16), transparent 70%)}
+.kpi-card:hover{transform:translateY(-6px);border-color:rgba(51,33,15,.32)!important;
+  box-shadow:0 24px 50px -20px rgba(51,33,15,.45)}
+.kpi-label{
+  font-size:9px!important;text-transform:uppercase!important;letter-spacing:2.2px!important;
+  color:var(--tx-mute)!important;font-weight:700!important;margin-bottom:14px!important;
+  position:relative;z-index:1;
+}
+.kpi-label .dv,.kpi-label span{font-family:'Noto Sans Devanagari',sans-serif}
+/* Count-up. The element also carries --kpi-n inline, so the counter resolves
+   to the true value even where @property is unsupported — it can never
+   render a wrong number, only a non-animated one. */
+.kpi-value{
+  position:relative;z-index:1;
+  font-family:'Instrument Serif',serif!important;
+  font-size:46px!important;font-weight:400!important;line-height:1!important;
+  letter-spacing:-1.5px;margin-bottom:8px!important;
+  color:transparent!important;
+  counter-reset:kpi var(--kpi-n);
+  animation:fade-up 600ms var(--e-out) 420ms both;
+}
+.kpi-value::after{
+  content:counter(kpi);position:absolute;left:0;top:0;
+  background:linear-gradient(180deg,var(--tx),var(--violet));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.kpi-value.pct::after{content:counter(kpi) "%"}
+.k-red .kpi-value::after{background:linear-gradient(180deg,var(--tx),var(--red));
+  -webkit-background-clip:text;background-clip:text}
+.k-green .kpi-value::after{background:linear-gradient(180deg,var(--tx),var(--green));
+  -webkit-background-clip:text;background-clip:text}
+.k-amb .kpi-value::after{background:linear-gradient(180deg,var(--tx),#B57608);
+  -webkit-background-clip:text;background-clip:text}
+.kpi-delta{font-size:10.5px!important;font-family:'Fira Code',monospace!important;
+  color:var(--tx-mute)!important;position:relative;z-index:1}
+.kpi-delta.up{color:var(--green)!important}
+.kpi-delta.down{color:var(--red)!important}
+
+/* ══ SECTION LABEL ═══════════════════════════════════════════════════ */
+.sec-label{
+  position:relative;border-bottom:none!important;
+  font-size:10px!important;letter-spacing:2.6px!important;text-transform:uppercase;
+  color:var(--tx-dim)!important;font-weight:700!important;
+  padding-bottom:12px!important;margin:34px 0 18px!important;
+  display:flex;align-items:center;gap:8px;
+  font-family:'Plus Jakarta Sans',sans-serif!important;
+  animation:fade-in var(--d) var(--e-soft) both;
+}
+.sec-label::before{
+  content:"";width:5px;height:5px;border-radius:50%;background:var(--violet);
+  box-shadow:0 0 8px rgba(195,83,45,.6);flex-shrink:0;
+  animation:beat 2.6s var(--e-soft) infinite;
+}
+/* the splash's saffron rule, drawn under every section label */
+.sec-label::after{
+  content:"";position:absolute;left:0;bottom:0;width:100%;height:2px;
+  background:linear-gradient(90deg,var(--saffron) 0%,rgba(233,162,27,.35) 34%,transparent 78%);
+  transform:scaleX(0);transform-origin:left;
+  animation:draw-x 900ms var(--e-out) 140ms both;
+}
+.ngis-hr{height:1px;background:var(--hair-2);margin:30px 0;border:none}
+.ngis-body{padding:22px 0 0}
+
+/* ══ REGISTER TABLE ══════════════════════════════════════════════════ */
+.reg-wrap{
+  overflow-x:auto;border-radius:var(--r)!important;
+  animation:fade-up var(--d-slow) var(--e-out) 160ms both;
+}
+.reg-table{width:100%;border-collapse:collapse;font-size:12.5px;
+  font-family:'Plus Jakarta Sans',sans-serif}
+.reg-table thead tr{background:rgba(51,33,15,.05)!important;border:none}
+.reg-table thead th{
+  padding:14px 16px!important;text-align:left;border:none!important;
+  border-bottom:1px solid var(--hair)!important;
+  color:var(--tx-mute)!important;font-size:9px!important;font-weight:700!important;
+  letter-spacing:1.4px;text-transform:uppercase;white-space:nowrap;
+}
+.reg-table thead th .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:10.5px;font-weight:600;color:var(--tx-dim);letter-spacing:.3px;text-transform:none}
+.reg-table thead th .en{display:block;font-size:8px;opacity:.6;margin-top:2px}
+.reg-table tbody tr{
+  border-bottom:1px solid var(--hair-2);
+  animation:row-in 340ms var(--e-out) both;
+}
+.reg-table tbody tr:nth-child(1){animation-delay:220ms}
+.reg-table tbody tr:nth-child(2){animation-delay:250ms}
+.reg-table tbody tr:nth-child(3){animation-delay:280ms}
+.reg-table tbody tr:nth-child(4){animation-delay:310ms}
+.reg-table tbody tr:nth-child(5){animation-delay:340ms}
+.reg-table tbody tr:nth-child(6){animation-delay:370ms}
+.reg-table tbody tr:nth-child(7){animation-delay:400ms}
+.reg-table tbody tr:nth-child(8){animation-delay:430ms}
+.reg-table tbody tr:nth-child(9){animation-delay:460ms}
+.reg-table tbody tr:nth-child(10){animation-delay:490ms}
+.reg-table tbody tr:nth-child(n+11){animation-delay:520ms}
+.reg-table tbody tr:nth-child(odd) td,
+.reg-table tbody tr:nth-child(even) td{background:transparent!important}
+.reg-table tbody td{
+  padding:13px 16px!important;border:none!important;vertical-align:middle;
+  color:var(--tx-dim)!important;
+  transition:background var(--d-fast) var(--e-soft),color var(--d-fast) var(--e-soft);
+}
+.reg-table tbody tr:hover td{background:rgba(195,83,45,.09)!important;color:var(--tx)!important}
+.reg-table tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--violet)}
+.p-high{color:var(--red)!important;font-weight:600;font-family:'Fira Code',monospace;font-size:9.5px}
+.p-med{color:var(--saffron)!important;font-weight:600;font-family:'Fira Code',monospace;font-size:9.5px}
+.p-low{color:var(--green)!important;font-weight:600;font-family:'Fira Code',monospace;font-size:9.5px}
+.age-red{color:var(--red)!important;font-family:'Fira Code',monospace}
+.age-amb{color:var(--saffron)!important;font-family:'Fira Code',monospace}
+.age-ok{color:var(--tx-mute)!important;font-family:'Fira Code',monospace}
+.src-badge{
+  background:rgba(195,83,45,.1)!important;color:var(--violet)!important;
+  border:1px solid rgba(195,83,45,.35)!important;border-radius:100px!important;
+  padding:3px 9px!important;font-size:8.5px!important;
+  font-family:'Fira Code',monospace;white-space:nowrap;letter-spacing:.4px;
+  transition:all var(--d-fast) var(--e-soft);
+}
+.reg-table tbody tr:hover .src-badge{background:var(--violet)!important;color:#F7EDD6!important;
+  box-shadow:0 0 14px rgba(195,83,45,.4)}
+
+/* ══ REGISTER TICKET ═════════════════════════════════════════════════ */
+.reg-ticket{
+  border-radius:var(--r)!important;overflow:hidden;
+  border:1px solid rgba(195,83,45,.4)!important;
+  animation:pop-in 620ms var(--e-out) both;
+  box-shadow:0 24px 55px -24px rgba(51,33,15,.5);
+}
+.reg-ticket-header{
+  background:linear-gradient(120deg,var(--violet),var(--violet-dim))!important;
+  padding:16px!important;text-align:center;position:relative;overflow:hidden;
+}
+.reg-ticket-header::after{
+  content:"";position:absolute;inset:0;width:32%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent);
+  animation:sheen 4.2s var(--e-soft) 600ms infinite;
+}
+.reg-ticket-h1{font-family:'Noto Serif Devanagari',serif!important;font-size:15px!important;
+  font-weight:600!important;color:#F7EDD6!important}
+.reg-ticket-h2{color:rgba(247,237,214,.75)!important;font-size:10px!important;
+  letter-spacing:.6px;margin-top:3px}
+.reg-ticket-h3{color:#FFD59B!important;font-size:11.5px!important;font-weight:600;
+  margin-top:7px;font-family:'Noto Serif Devanagari',serif!important}
+.reg-ticket table{width:100%;border-collapse:collapse}
+.reg-ticket .lbl{
+  background:rgba(51,33,15,.04)!important;
+  border:1px solid var(--hair-2)!important;padding:9px 12px!important;width:135px;
+  font-size:8.5px!important;color:var(--tx-mute)!important;font-weight:700!important;
+  text-transform:uppercase;letter-spacing:1px;vertical-align:top;
+}
+.reg-ticket .lbl .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:10.5px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--tx-dim)}
+.reg-ticket .lbl .en{display:block;font-size:8px;opacity:.6;margin-top:2px}
+.reg-ticket .val{
+  border:1px solid var(--hair-2)!important;padding:9px 12px!important;
+  font-size:12px!important;color:var(--tx)!important;vertical-align:top;line-height:1.7;
+}
+.reg-ticket .val.mono{font-family:'Fira Code',monospace}
+.reg-ticket .section-hdr{
+  background:rgba(195,83,45,.1)!important;padding:7px 12px!important;
+  font-size:8.5px!important;font-weight:700!important;color:var(--violet)!important;
+  text-transform:uppercase;letter-spacing:1.6px;
+  border-top:1px solid var(--hair-2);border-bottom:1px solid var(--hair-2);
+}
+.prashan-row{border:1px solid var(--hair-2)!important;padding:11px 12px!important;
+  display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.prashan-box{
+  border:1px solid rgba(195,83,45,.4)!important;border-radius:100px!important;
+  padding:5px 12px!important;font-size:9.5px!important;font-weight:600;
+  color:var(--violet)!important;background:rgba(195,83,45,.08)!important;
+  letter-spacing:.3px;white-space:nowrap;
+  transition:transform var(--d-fast) var(--e-back),background var(--d-fast) var(--e-soft),
+             color var(--d-fast) var(--e-soft),box-shadow var(--d-fast) var(--e-soft);
+}
+.prashan-box.highlight{background:var(--violet)!important;color:#F7EDD6!important;
+  box-shadow:0 0 16px rgba(195,83,45,.4)}
+.prashan-box:hover{transform:translateY(-2px);background:var(--violet)!important;color:#F7EDD6!important;
+  box-shadow:0 0 16px rgba(195,83,45,.4)}
+.jur-chain-light{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.jur-step-light{
+  background:rgba(51,33,15,.04)!important;color:var(--tx-dim)!important;
+  padding:4px 10px!important;border-radius:100px!important;font-size:9.5px!important;
+  font-weight:500;font-family:'Fira Code',monospace;white-space:nowrap;
+  border:1px solid var(--hair)!important;
+  transition:transform var(--d-fast) var(--e-back),background var(--d-fast) var(--e-soft),
+             color var(--d-fast) var(--e-soft);
+}
+.jur-step-light:hover{transform:translateY(-2px);background:var(--cyan)!important;color:#F4E7C8!important}
+.pri-stamp{
+  display:inline-block;border:1px solid;padding:4px 14px;border-radius:100px;
+  font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
+}
+.pri-high{border-color:var(--red)!important;color:var(--red)!important;
+  background:rgba(147,49,43,.1)!important;animation:stamp 2.6s var(--e-soft) infinite}
+.pri-normal{border-color:var(--green)!important;color:var(--green)!important;
+  background:rgba(79,124,58,.1)!important}
+
+/* ══ ALERTS ══════════════════════════════════════════════════════════ */
+.alert-high,.alert-normal,.alert-warn{
+  border-radius:var(--r-sm)!important;padding:13px 16px!important;margin-top:10px!important;
+  font-size:11.5px!important;font-family:'Fira Code',monospace!important;
+  white-space:pre-wrap;line-height:1.7;
+  animation:alert-in var(--d) var(--e-out) both;
+}
+.alert-high{background:rgba(147,49,43,.08)!important;border:1px solid rgba(147,49,43,.3)!important;
+  border-left:2px solid var(--red)!important;color:#7A2822!important}
+.alert-normal{background:rgba(79,124,58,.08)!important;border:1px solid rgba(79,124,58,.3)!important;
+  border-left:2px solid var(--green)!important;color:#3E6230!important}
+.alert-warn{background:rgba(233,162,27,.1)!important;border:1px solid rgba(233,162,27,.35)!important;
+  border-left:2px solid var(--saffron)!important;color:#8A5E0E!important}
+.processing-note{
+  border-radius:var(--r-sm)!important;padding:14px!important;font-size:9.5px!important;
+  font-family:'Fira Code',monospace!important;color:var(--tx-mute)!important;
+  margin-top:12px!important;line-height:2;
+  animation:fade-up var(--d-slow) var(--e-out) 180ms both;
+}
+
+/* ══ SCHEME CARDS ════════════════════════════════════════════════════ */
+.scheme-entry{
+  border-radius:var(--r)!important;overflow:hidden;margin-bottom:16px!important;
+  animation:pop-in 600ms var(--e-back) both;
+  transition:transform var(--d) var(--e-soft),box-shadow var(--d) var(--e-soft),
+             border-color var(--d) var(--e-soft);
+}
+/* Each .scheme-entry is an only child of its own st.markdown wrapper, so
+   nth-child on the card never stages. Columns are true siblings. */
+div[data-testid="column"]:nth-child(1) .scheme-entry{animation-delay:120ms}
+div[data-testid="column"]:nth-child(2) .scheme-entry{animation-delay:200ms}
+div[data-testid="column"]:nth-child(3) .scheme-entry{animation-delay:280ms}
+.scheme-entry:hover{transform:translateY(-6px);border-color:rgba(195,83,45,.45)!important;
+  box-shadow:0 24px 50px -20px rgba(51,33,15,.45)}
+.scheme-entry-header{
+  background:linear-gradient(115deg,rgba(195,83,45,.16),rgba(233,162,27,.1))!important;
+  padding:12px 14px!important;display:flex;align-items:center;gap:10px;
+  border-bottom:1px solid var(--hair);position:relative;overflow:hidden;
+}
+.scheme-entry-header::after{
+  content:"";position:absolute;inset:0;width:38%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  transform:translateX(-140%) skewX(-18deg);
+  transition:transform 780ms var(--e-soft);
+}
+.scheme-entry:hover .scheme-entry-header::after{transform:translateX(320%) skewX(-18deg)}
+.scheme-central-tag{
+  background:rgba(195,83,45,.07)!important;border:1px solid rgba(195,83,45,.28)!important;
+  border-radius:var(--r-sm)!important;padding:6px 10px!important;font-size:10px!important;
+  color:var(--tx-dim)!important;margin-bottom:5px!important;
+  transition:transform var(--d-fast) var(--e-soft);
+}
+.scheme-state-tag{
+  background:rgba(233,162,27,.1)!important;border:1px solid rgba(233,162,27,.35)!important;
+  border-radius:var(--r-sm)!important;padding:6px 10px!important;font-size:10px!important;
+  color:var(--tx-dim)!important;margin-bottom:5px!important;
+  transition:transform var(--d-fast) var(--e-soft);
+}
+.scheme-entry:hover .scheme-central-tag,.scheme-entry:hover .scheme-state-tag{transform:translateX(4px)}
+
+/* ══ SIDEBAR ═════════════════════════════════════════════════════════ */
+/* Solid, and matched to theme secondaryBackgroundColor (.streamlit/config.toml)
+   so the option_menu component iframe blends in seamlessly. A gradient here
+   would band against that flat iframe rectangle. */
+section[data-testid="stSidebar"]{
+  background:#EFE2C2!important;
+  border-right:1px solid var(--hair)!important;
+}
+section[data-testid="stSidebar"]>div{background:transparent!important}
+section[data-testid="stSidebar"] iframe{background:transparent!important;color-scheme:light}
+section[data-testid="stSidebar"] h1,section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] .stMarkdown *{
+  color:var(--tx)!important;
 }
 section[data-testid="stSidebar"] div[data-baseweb="select"] *,
-section[data-testid="stSidebar"] input,
-section[data-testid="stSidebar"] textarea {
-    color: #212121 !important;
+section[data-testid="stSidebar"] input,section[data-testid="stSidebar"] textarea{
+  color:var(--tx)!important;
 }
-h1,h2,h3{font-family:'Noto Sans',sans-serif!important;color:#1E293B!important;font-weight:600!important}
+.sb-brand{padding:20px 14px 14px;border-bottom:1px solid var(--hair);
+  animation:fade-down 600ms var(--e-out) both}
+.sb-seal{
+  width:40px;height:40px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;
+  font-size:19px;position:relative;
+  background:conic-gradient(from var(--ring-a),var(--violet),var(--cyan),var(--saffron),var(--violet));
+  animation:ring-spin 11s linear infinite;
+}
+.sb-seal::before{content:"";position:absolute;inset:2px;border-radius:50%;background:#F9F0DC}
+.sb-seal span{position:relative;z-index:1}
+.sb-meta{font-family:'Fira Code',monospace;font-size:9.5px;color:var(--tx-mute);
+  line-height:2.1;padding-left:4px;letter-spacing:.3px}
+.sb-meta b{color:var(--tx-dim);font-weight:500}
+.sb-cap{font-size:8.5px;color:var(--tx-mute);text-transform:uppercase;letter-spacing:2px;
+  padding-left:4px;margin-bottom:7px;font-weight:700}
+.sb-div{height:1px;background:var(--hair-2);margin:14px -8px}
+.sb-fish{width:110px;margin:22px auto 8px;opacity:.5}
+.sb-fish svg{width:100%;height:auto;display:block}
 
-.tricolor-strip{height:5px;background:linear-gradient(90deg,#FF9933 33%,#FFFFFF 33%,#FFFFFF 66%,#138808 66%);width:100%}
+/* ══ NAV VEIL — one-shot loader on every page change ═════════════════
+   Streamlit reruns are server-side, so the veil rides in ON the incoming
+   page: parchment holds ~.45s over the new render, a terracotta sun-ring
+   spins, then the page resolves underneath. Same one-shot pattern as
+   .enter-veil. */
+.nav-veil{
+  position:fixed;inset:0;z-index:9998;pointer-events:none;
+  background:var(--ink);display:grid;place-items:center;
+  animation:nav-veil-out .55s var(--e-soft) .45s forwards;
+}
+.nav-veil i{
+  width:46px;height:46px;border-radius:50%;position:relative;
+  border:3px solid rgba(195,83,45,.22);border-top-color:var(--violet);
+  animation:nav-spin .8s linear infinite;
+}
+.nav-veil i::after{ /* saffron sun-hub, echoing the splash mandala */
+  content:"";position:absolute;inset:14px;border-radius:50%;
+  background:var(--saffron);opacity:.85;
+}
+@keyframes nav-veil-out{to{opacity:0;visibility:hidden}}
+@keyframes nav-spin{to{transform:rotate(360deg)}}
 
-.ngis-hero { position: relative; width: 100%; height: 320px; overflow: hidden; border-radius: 12px; box-shadow: 0 6px 16px rgba(0,0,0,0.08); margin-bottom: 24px; }
-.ngis-hero-bg { width: 100%; height: 100%; background-size: cover; background-position: center; filter: saturate(0.85) brightness(0.95); }
-.ngis-hero-over { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.45) 50%, rgba(0,0,0,0) 100%); display: flex; align-items: flex-end; padding: 36px 52px; }
-.ngis-hero h1 { font-family: 'Instrument Serif', serif !important; font-size: 3.8rem !important; color: #FFFFFF !important; margin: 0 0 8px !important; line-height: 1.1 !important; font-weight: 600 !important; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); }
-.ngis-hero p { color: #F8F5F0 !important; font-size: 14px !important; margin: 0 !important; letter-spacing: 0.5px; font-family: 'Plus Jakarta Sans', sans-serif !important; font-weight: 500 !important; text-shadow: 1px 1px 4px rgba(0,0,0,0.6); }
-.gov-header-top{background:#613AF5;padding:10px 52px;display:flex;align-items:center;
-  gap:16px;border-bottom:1px solid rgba(255,255,255,.12)}
-.gov-emblem{width:44px;height:44px;background:rgba(255,255,255,.15);border-radius:50%;
-  display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
-.gov-title-hi{font-family:'Noto Sans Devanagari','Noto Sans',sans-serif;font-size:13px;
-  font-weight:600;color:#FFFFFF;letter-spacing:.3px;line-height:1.3}
-.gov-title-en{font-family:'Noto Sans',sans-serif;font-size:11px;
-  color:rgba(255,255,255,.65);letter-spacing:.5px;margin-top:1px}
-.gov-page-bar{background:#5231D1;padding:8px 52px;display:flex;align-items:center;gap:12px}
-.gov-page-title{font-family:'Noto Sans',sans-serif;font-size:16px;font-weight:600;color:#FFFFFF}
-.gov-page-sub{font-family:'Noto Sans',sans-serif;font-size:11px;
-  color:rgba(255,255,255,.55);margin-left:auto;letter-spacing:.3px}
+/* ══ CONTROLS ════════════════════════════════════════════════════════ */
+.stButton>button{
+  position:relative;overflow:hidden;
+  background:linear-gradient(120deg,var(--violet),var(--violet-dim))!important;
+  color:#F7EDD6!important;font-weight:600!important;
+  font-family:'Plus Jakarta Sans',sans-serif!important;
+  border:1px solid rgba(51,33,15,.3)!important;border-radius:var(--r-sm)!important;
+  letter-spacing:.3px!important;padding:11px 18px!important;
+  box-shadow:0 10px 26px -10px rgba(147,49,43,.55);
+  transition:transform var(--d-fast) var(--e-soft),box-shadow var(--d-fast) var(--e-soft),
+             filter var(--d-fast) var(--e-soft)!important;
+}
+.stButton>button:hover{transform:translateY(-2px);filter:brightness(1.08);
+  box-shadow:0 16px 38px -12px rgba(147,49,43,.7)!important}
+.stButton>button:active{transform:translateY(0) scale(.985)}
+.stButton>button::after{
+  content:"";position:absolute;top:0;bottom:0;left:0;width:34%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  transform:translateX(-140%) skewX(-18deg);
+  transition:transform 700ms var(--e-soft);
+}
+.stButton>button:hover::after{transform:translateX(320%) skewX(-18deg)}
 
-.ngis-body{padding:24px 0 0}
-.ngis-hr{height:1px;background:#dee2e6;margin:20px 0}
+.stTabs [data-baseweb="tab-list"]{background:transparent!important;
+  border-bottom:1px solid var(--hair)!important;gap:2px!important}
+.stTabs [data-baseweb="tab"]{
+  color:var(--tx-mute)!important;font-family:'Plus Jakarta Sans',sans-serif!important;
+  font-size:12.5px!important;font-weight:600!important;padding:11px 20px!important;
+  border-bottom:2px solid transparent!important;border-radius:var(--r-sm) var(--r-sm) 0 0!important;
+  transition:color var(--d-fast) var(--e-soft),background var(--d-fast) var(--e-soft)!important;
+}
+.stTabs [data-baseweb="tab"]:hover{color:var(--tx)!important;background:rgba(51,33,15,.05)!important}
+.stTabs [aria-selected="true"]{color:var(--violet)!important;border-bottom-color:var(--violet)!important;
+  background:rgba(195,83,45,.07)!important}
 
-.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
-.kpi-card{background:#FFFFFF;border:1px solid #dee2e6;border-left:4px solid #613AF5;
-  border-radius:4px;padding:14px 16px 12px;transition:box-shadow .2s}
-.kpi-card:hover{box-shadow:0 4px 12px rgba(97,58,245,.08)}
-.kpi-card.k-red{border-left-color:#B7131A}
-.kpi-card.k-green{border-left-color:#3C9718}
-.kpi-card.k-amb{border-left-color:#B77224}
-.kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:1.8px;color:#5E5E5E;
-  font-weight:600;font-family:'Noto Sans',sans-serif;margin-bottom:8px}
-.kpi-value{font-size:32px;font-weight:600;color:#613AF5;line-height:1;
-  font-family:'Noto Sans',sans-serif;margin-bottom:5px}
-.kpi-delta{font-size:11px;font-family:'Fira Code',monospace;color:#5E5E5E}
-.kpi-delta.up{color:#3C9718}.kpi-delta.down{color:#B7131A}
-
-.sec-label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#613AF5;
-  font-weight:700;font-family:'Noto Sans',sans-serif;
-  padding-bottom:8px;border-bottom:2px solid #613AF5;margin-bottom:14px;
-  display:flex;align-items:center;gap:6px}
-
-.reg-wrap{overflow-x:auto;border:1px solid #dee2e6;border-radius:4px}
-.reg-table{width:100%;border-collapse:collapse;font-size:13px;font-family:'Noto Sans',sans-serif}
-.reg-table thead tr{background:#F8F9FA;border-bottom:2px solid #dee2e6}
-.reg-table thead th{padding:12px 16px;text-align:left;color:#212121;
-  border:1px solid #dee2e6;font-size:10px;font-weight:600;letter-spacing:.5px;white-space:nowrap}
-.reg-table thead th .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
-  font-size:11px;font-weight:600}
-.reg-table thead th .en{display:block;font-size:9px;opacity:.7;letter-spacing:.5px;margin-top:1px}
-.reg-table tbody tr{border-bottom:1px solid #dee2e6}
-.reg-table tbody tr:nth-child(odd) td{background:#FFFFFF}
-.reg-table tbody tr:nth-child(even) td{background:#F8F9FA}
-.reg-table tbody tr:hover td{background:#f1f3f5}
-.reg-table tbody td{padding:12px 16px;border-right:1px solid #dee2e6;
-  vertical-align:middle;color:#212121}
-.reg-table tbody td:last-child{border-right:none}
-.p-high{color:#B7131A;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
-.p-med{color:#B77224;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
-.p-low{color:#3C9718;font-weight:600;font-family:'Fira Code',monospace;font-size:10px}
-.age-red{color:#B7131A;font-family:'Fira Code',monospace}
-.age-amb{color:#B77224;font-family:'Fira Code',monospace}
-.age-ok{color:#5E5E5E;font-family:'Fira Code',monospace}
-.src-badge{background:#e9ecef;color:#613AF5;border:1px solid #ced4da;
-  border-radius:2px;padding:1px 6px;font-size:9px;font-family:'Fira Code',monospace;white-space:nowrap}
-
-.reg-ticket{border:2px solid #613AF5;border-radius:4px;overflow:hidden;
-  font-family:'Noto Sans',sans-serif}
-.reg-ticket-header{background:#613AF5;padding:12px 16px;text-align:center}
-.reg-ticket-h1{font-family:'Noto Sans Devanagari','Noto Sans',sans-serif;
-  font-size:14px;font-weight:700;color:#FFFFFF;letter-spacing:.3px}
-.reg-ticket-h2{color:rgba(255,255,255,.65);font-size:11px;margin-top:2px;letter-spacing:.5px}
-.reg-ticket-h3{color:#FFC53F;font-size:12px;font-weight:600;
-  margin-top:5px;font-family:'Noto Sans Devanagari',sans-serif}
-.reg-ticket table{width:100%;border-collapse:collapse}
-.reg-ticket .lbl{background:#F8F9FA;border:1px solid #dee2e6;padding:7px 10px;
-  width:130px;font-size:10px;color:#613AF5;font-weight:600;
-  text-transform:uppercase;letter-spacing:.5px;vertical-align:top}
-.reg-ticket .lbl .hi{display:block;font-family:'Noto Sans Devanagari',sans-serif;
-  font-size:11px;font-weight:600;text-transform:none;letter-spacing:0}
-.reg-ticket .lbl .en{display:block;font-size:9px;opacity:.65;margin-top:1px}
-.reg-ticket .val{border:1px solid #dee2e6;padding:7px 10px;
-  font-size:12px;color:#212121;vertical-align:top;line-height:1.6}
-.reg-ticket .val.mono{font-family:'Fira Code',monospace}
-.reg-ticket .section-hdr{background:#613AF5;padding:5px 10px;
-  font-size:10px;font-weight:600;color:#FFFFFF;
-  text-transform:uppercase;letter-spacing:1px;font-family:'Noto Sans',sans-serif}
-.prashan-row{border:1px solid #dee2e6;padding:8px 10px;
-  display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.prashan-box{border:1px solid #613AF5;border-radius:2px;padding:4px 10px;
-  font-size:10px;font-weight:600;color:#613AF5;background:#e9ecef;
-  font-family:'Noto Sans',sans-serif;letter-spacing:.3px}
-.prashan-box.highlight{background:#613AF5;color:#FFFFFF}
-.pri-stamp{display:inline-block;border:2px solid;padding:3px 12px;border-radius:2px;
-  font-size:11px;font-weight:700;font-family:'Noto Sans',sans-serif;
-  letter-spacing:1px;text-transform:uppercase}
-.pri-high{border-color:#B7131A;color:#B7131A;background:#FFEEEA}
-.pri-normal{border-color:#3C9718;color:#3C9718;background:#EDF7E6}
-
-.alert-high{background:#FFEEEA;border:1px solid #FFCDC0;border-left:4px solid #B7131A;
-  border-radius:2px;padding:10px 14px;margin-top:8px;
-  font-size:12px;font-family:'Fira Code',monospace;color:#741010;white-space:pre-wrap}
-.alert-normal{background:#EDF7E6;border:1px solid #E3F2D9;border-left:4px solid #3C9718;
-  border-radius:2px;padding:10px 14px;margin-top:8px;
-  font-size:12px;font-family:'Fira Code',monospace;color:#044400}
-.alert-warn{background:#FEF1E7;border:1px solid #F9D7B9;border-left:4px solid #B77224;
-  border-radius:2px;padding:10px 14px;margin-top:8px;
-  font-size:12px;font-family:'Fira Code',monospace;color:#573000;white-space:pre-wrap}
-.processing-note{background:#F8F9FA;border:1px solid #dee2e6;border-radius:2px;
-  padding:10px 12px;font-size:10px;font-family:'Fira Code',monospace;
-  color:#5E5E5E;margin-top:10px;line-height:1.8}
-
-.brief-card{background:#FFFFFF;border:1px solid #dee2e6;border-left:4px solid #613AF5;
-  border-radius:2px;padding:12px 16px;margin-bottom:18px;
-  font-family:'Noto Sans',sans-serif;font-size:13px;color:#212121;line-height:1.7}
-
-.scheme-entry{background:#FFFFFF;border:1px solid #dee2e6;border-radius:2px;
-  overflow:hidden;margin-bottom:14px}
-.scheme-entry-header{background:#613AF5;padding:8px 12px;
-  display:flex;align-items:center;gap:8px}
-.scheme-central-tag{background:#e9ecef;border:1px solid #ced4da;border-radius:2px;
-  padding:5px 9px;font-size:11px;color:#613AF5;margin-bottom:4px}
-.scheme-state-tag{background:#FEF1E7;border:1px solid #F9D7B9;border-radius:2px;
-  padding:5px 9px;font-size:11px;color:#573000;margin-bottom:4px}
-.jur-chain-light{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
-.jur-step-light{background:#e9ecef;color:#613AF5;padding:3px 8px;border-radius:2px;
-  font-size:10px;font-weight:600;font-family:'Fira Code',monospace;border:1px solid #ced4da}
-
-.stTabs [data-baseweb="tab-list"]{background:#FFFFFF!important;
-  border-bottom:2px solid #613AF5!important;gap:0!important}
-.stTabs [data-baseweb="tab"]{color:#5E5E5E!important;font-family:'Noto Sans',sans-serif!important;
-  font-size:13px!important;font-weight:500!important;padding:10px 22px!important;
-  border-bottom:2px solid transparent!important}
-.stTabs [aria-selected="true"]{color:#613AF5!important;border-bottom-color:#613AF5!important;
-  background:transparent!important;font-weight:600!important}
-.stButton>button{background:#613AF5!important;color:#FFFFFF!important;
-  font-weight:600!important;font-family:'Noto Sans',sans-serif!important;
-  border:none!important;border-radius:4px!important;letter-spacing:.3px!important}
-.stButton>button:hover{background:#774BFF!important}
 .stSelectbox>div>div,.stTextArea textarea,.stTextInput input{
-  background:#FFFFFF!important;border-color:#dee2e6!important;
-  color:#212121!important;font-family:'Noto Sans',sans-serif!important;
-  font-size:13px!important;border-radius:4px!important}
-div[data-testid="metric-container"]{background:#FFFFFF!important;
-  border:1px solid #dee2e6!important;border-left:4px solid #613AF5!important;
-  border-radius:4px!important;padding:12px 14px!important}
-[data-testid="metric-container"] label{color:#5E5E5E!important;
-  font-family:'Noto Sans',sans-serif!important;font-size:9px!important;
-  text-transform:uppercase!important;letter-spacing:1.5px!important}
+  background:rgba(255,255,255,.5)!important;
+  border:1px solid var(--hair)!important;color:var(--tx)!important;
+  font-family:'Plus Jakarta Sans',sans-serif!important;font-size:12.5px!important;
+  border-radius:var(--r-sm)!important;
+  transition:border-color var(--d-fast) var(--e-soft),box-shadow var(--d-fast) var(--e-soft),
+             background var(--d-fast) var(--e-soft)!important;
+}
+.stSelectbox>div>div:hover,.stTextArea textarea:hover,.stTextInput input:hover{
+  background:rgba(255,255,255,.7)!important;border-color:rgba(51,33,15,.3)!important}
+.stSelectbox>div>div:focus-within,.stTextArea textarea:focus,.stTextInput input:focus{
+  border-color:var(--violet)!important;box-shadow:0 0 0 3px rgba(195,83,45,.22)!important}
+div[data-baseweb="popover"] li{background:var(--surf)!important;color:var(--tx)!important}
+div[data-baseweb="popover"] li:hover{background:rgba(195,83,45,.14)!important}
+
+div[data-testid="metric-container"]{
+  background:var(--surf)!important;border:1px solid var(--hair)!important;
+  border-left:2px solid var(--violet)!important;border-radius:var(--r)!important;
+  padding:16px!important;
+  animation:pop-in 600ms var(--e-back) both;
+  transition:transform var(--d) var(--e-soft),box-shadow var(--d) var(--e-soft)!important;
+}
+div[data-testid="metric-container"]:hover{transform:translateY(-4px);
+  box-shadow:0 20px 44px -18px rgba(51,33,15,.4)!important}
+[data-testid="metric-container"] label{color:var(--tx-mute)!important;font-size:9px!important;
+  text-transform:uppercase!important;letter-spacing:1.8px!important}
 [data-testid="metric-container"] [data-testid="metric-value"]{
-  color:#613AF5!important;font-weight:600!important}
-.stDataFrame{font-family:'Fira Code',monospace!important;font-size:11px!important}
-.streamlit-expanderHeader{background:#F8F9FA!important;border:1px solid #dee2e6!important;
-  font-family:'Noto Sans',sans-serif!important;color:#613AF5!important;border-radius:4px!important}
-.streamlit-expanderContent{background:#FFFFFF!important;border:1px solid #dee2e6!important;
-  border-top:none!important}
-.stSpinner>div{border-color:#613AF5 transparent transparent transparent!important}
-.stRadio label{color:#212121!important;font-family:'Noto Sans',sans-serif!important}
+  color:var(--tx)!important;font-family:'Instrument Serif',serif!important;font-weight:400!important}
+
+.stDataFrame,[data-testid="stDataFrame"]{
+  font-family:'Fira Code',monospace!important;font-size:11px!important;
+  border:1px solid var(--hair)!important;border-radius:var(--r)!important;overflow:hidden;
+  animation:fade-up var(--d-slow) var(--e-out) both;
+}
+.streamlit-expanderHeader,[data-testid="stExpander"] summary{
+  background:var(--surf)!important;border:1px solid var(--hair)!important;
+  font-family:'Plus Jakarta Sans',sans-serif!important;color:var(--tx-dim)!important;
+  border-radius:var(--r-sm)!important;font-size:12px!important;
+  transition:background var(--d-fast) var(--e-soft)!important;
+}
+.streamlit-expanderHeader:hover,[data-testid="stExpander"] summary:hover{
+  background:rgba(195,83,45,.1)!important;color:var(--tx)!important}
+[data-testid="stExpander"]{border:none!important;background:transparent!important}
+.streamlit-expanderContent{background:var(--surf)!important;
+  border:1px solid var(--hair)!important;border-top:none!important}
+.stSpinner>div{border-color:var(--violet) transparent transparent transparent!important}
+.stRadio label{color:var(--tx-dim)!important;font-family:'Plus Jakarta Sans',sans-serif!important}
+.stRadio [role="radiogroup"]{gap:8px}
+[data-testid="stFileUploader"],[data-testid="stFileUploadDropzone"]{
+  background:var(--surf)!important;border:1px dashed rgba(51,33,15,.3)!important;
+  border-radius:var(--r)!important;color:var(--tx-dim)!important;
+  transition:border-color var(--d) var(--e-soft),background var(--d) var(--e-soft)!important;
+}
+[data-testid="stFileUploadDropzone"]:hover{border-color:var(--violet)!important;
+  background:rgba(195,83,45,.06)!important}
+[data-testid="stPlotlyChart"],[data-testid="stImage"]{
+  border-radius:var(--r);overflow:hidden;
+  animation:fade-up var(--d-slow) var(--e-out) 160ms both;
+}
+[data-testid="stImage"] img{border-radius:var(--r);border:1px solid var(--hair)}
+[data-testid="stAlert"]{background:var(--surf)!important;border:1px solid var(--hair)!important;
+  border-radius:var(--r-sm)!important;color:var(--tx)!important}
+hr{border-color:var(--hair-2)!important}
+
+/* Keyboard focus is never traded away for aesthetics */
+.stButton>button:focus-visible,.stTextInput input:focus-visible,
+.stTextArea textarea:focus-visible,.stTabs [data-baseweb="tab"]:focus-visible,
+[data-testid="stFileUploadDropzone"]:focus-visible{
+  /* terracotta, not saffron: a focus indicator must clear 3:1 on parchment */
+  outline:3px solid var(--violet)!important;outline-offset:3px!important;
+}
+
+/* ══ KEYFRAMES ═══════════════════════════════════════════════════════ */
+@keyframes ken{from{transform:scale(1.02) translate3d(0,0,0)}
+               to{transform:scale(1.16) translate3d(-1.6%,-1.6%,0)}}
+@keyframes hero-drift{from{transform:translateY(-3%)}to{transform:translateY(3%)}}
+@keyframes hero-in{from{opacity:0;transform:translateY(22px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes fade-up{from{opacity:0;transform:translate3d(0,18px,0)}to{opacity:1;transform:none}}
+@keyframes fade-down{from{opacity:0;transform:translate3d(0,-14px,0)}to{opacity:1;transform:none}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes pop-in{from{opacity:0;transform:translate3d(0,18px,0) scale(.94)}to{opacity:1;transform:none}}
+@keyframes row-in{from{opacity:0;transform:translate3d(-10px,0,0)}to{opacity:1;transform:none}}
+@keyframes alert-in{from{opacity:0;transform:translate3d(-12px,0,0)}to{opacity:1;transform:none}}
+@keyframes draw-x{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes draw-y{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes rule-grow{from{width:0}to{width:220px}}
+@keyframes sheen{0%{transform:translateX(-140%) skewX(-18deg)}
+                 100%{transform:translateX(360%) skewX(-18deg)}}
+@keyframes sheen-text{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+@keyframes ring-spin{to{--ring-a:360deg}}
+@keyframes beat{0%,100%{box-shadow:0 0 0 0 rgba(79,124,58,.55)}70%{box-shadow:0 0 0 7px rgba(79,124,58,0)}}
+@keyframes stamp{0%,100%{box-shadow:0 0 0 0 rgba(147,49,43,.4)}70%{box-shadow:0 0 0 8px rgba(147,49,43,0)}}
+
+/* ══ REDUCED MOTION — hold every end state, drop the movement ═══════ */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms!important;animation-iteration-count:1!important;
+    animation-delay:0ms!important;transition-duration:.01ms!important;
+    scroll-behavior:auto!important;
+  }
+  [data-testid="stAppViewContainer"]::before,.ngis-hero-bg,.mast-seal,.sb-seal{animation:none!important}
+  .tricolor-strip::after,.reg-ticket-header::after,.stButton>button::after,
+  .nav-veil{display:none!important}
+  .hero-rule{width:220px!important}
+}
 </style>
 """, unsafe_allow_html=True)
+
+# One-shot arrival veil: the splash's "dip to dark" resolves into the
+# console's own entrance choreography (hero-in / fade-up above). The dip
+# colour is manuscript ink-brown — a page turn, not a cut to black.
+if st.session_state.pop("just_entered", False):
+    st.markdown("""<div class="enter-veil"></div><style>
+    .enter-veil{position:fixed;inset:0;background:#33210F;z-index:9999;pointer-events:none;
+      animation:veil-clear 900ms 120ms cubic-bezier(.16,1,.3,1) forwards}
+    @keyframes veil-clear{from{opacity:1}to{opacity:0;visibility:hidden}}
+    @media (prefers-reduced-motion:reduce){.enter-veil{display:none}}
+    </style>""", unsafe_allow_html=True)
+
+# Corner spirals — the splash's frame ornaments, standing static at the
+# four viewport corners (styling: .ms-corner in the master CSS block).
+_CORNER_STATIC = corner_svg_static()
+st.markdown(
+    f'<div class="ms-corner ms-c-tl ms-motif-static">{_CORNER_STATIC}</div>'
+    f'<div class="ms-corner ms-c-tr ms-motif-static">{_CORNER_STATIC}</div>'
+    f'<div class="ms-corner ms-c-br ms-motif-static">{_CORNER_STATIC}</div>'
+    f'<div class="ms-corner ms-c-bl ms-motif-static">{_CORNER_STATIC}</div>',
+    unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PRESENTATION HELPERS
+# Chrome only — these render no data and hold no state. The Devanagari
+# strings here are display copy; the English page keys that drive routing
+# are untouched.
+# ══════════════════════════════════════════════════════════════════════
+def heritage_masthead():
+    """Bilingual Nalanda masthead — Devanagari leads, English is the subtitle."""
+    st.markdown(f"""
+    <div class="ngis-mast">
+      <div class="mast-l">
+        <div class="mast-seal"><span>☸</span></div>
+        <div>
+          <div class="mast-hi">नालंदा</div>
+          <div class="mast-en">Grievance Intelligence</div>
+        </div>
+      </div>
+      <div class="mast-r">
+        <span class="mast-live"><i></i> LIVE · {datetime.now().strftime('%H:%M')} IST</span><br>
+        हिलसा अनुमंडल · <b>EST. 427 CE</b>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+
+def hero(title_en: str, title_hi: str, subtitle: str, image: str, kicker: str):
+    """Cinematic hero: duotone-washed photograph, Ken Burns drift, layered type."""
+    st.markdown(f"""
+    <div class="ngis-hero">
+      <div class="ngis-hero-bg" style="background-image:{hero_css_bg(image)};position:absolute;inset:0"></div>
+      <div class="ngis-hero-over">
+        <div>
+          <div class="hero-kicker"><i></i> {kicker}</div>
+          <span class="hero-hi">{title_hi}</span>
+          <h1>{title_en}</h1>
+          <div class="hero-rule"></div>
+          <p>{subtitle}</p>
+        </div>
+      </div>
+    </div>""", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -500,26 +1161,25 @@ resolved  = len(df[df["Status"]=="Resolved"])
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown('<div style="height:5px;background:linear-gradient(90deg,#FF9933 33%,#fff 33%,#fff 66%,#138808 66%);margin:-1rem -1rem 0 -1rem"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="tricolor-strip" style="margin:-1rem -1rem 0"></div>', unsafe_allow_html=True)
 
     st.markdown("""
-    <div style='padding:16px 14px 10px;border-bottom:1px solid rgba(255,255,255,.15)'>
-      <div style='display:flex;align-items:center;gap:10px'>
-        <div style='width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:50%;
-             display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0'>⚖</div>
+    <div class='sb-brand'>
+      <div style='display:flex;align-items:center;gap:12px'>
+        <div class='sb-seal'><span>⚖</span></div>
         <div>
-          <div style='font-family:Noto Sans Devanagari,Noto Sans,sans-serif;font-size:13px;
-               font-weight:700;color:#FFFFFF;line-height:1.2'>बिहार सरकार</div>
-          <div style='font-size:9px;color:rgba(255,255,255,.7);letter-spacing:1px;
-               text-transform:uppercase;margin-top:1px'>Government of Bihar</div>
+          <div class='dv' style='font-size:14px;font-weight:600;color:#33210F;line-height:1.2'>बिहार सरकार</div>
+          <div style='font-size:8px;color:rgba(51,33,15,.58);letter-spacing:2.4px;
+               text-transform:uppercase;margin-top:3px;font-weight:700'>Government of Bihar</div>
         </div>
       </div>
-      <div style='margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15)'>
-        <div style='font-family:Noto Sans,sans-serif;font-size:12px;font-weight:600;color:#FFC53F'>NGIS</div>
-        <div style='font-size:9px;color:rgba(255,255,255,.75);letter-spacing:.5px;
-             font-family:Noto Sans,sans-serif'>Nalanda Grievance Intelligence System</div>
-        <div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:2px;
-             font-family:Fira Code,monospace'>Hilsa Sub-Division · Nalanda</div>
+      <div style='margin-top:14px;padding-top:12px;border-top:1px solid rgba(51,33,15,.09)'>
+        <div style="font-family:'Instrument Serif',serif;font-size:19px;color:#C3532D;
+             letter-spacing:.5px;line-height:1">NGIS</div>
+        <div style='font-size:9.5px;color:rgba(51,33,15,.78);letter-spacing:.3px;margin-top:4px;line-height:1.5'>
+             Nalanda Grievance<br>Intelligence System</div>
+        <div style="font-size:9px;color:rgba(51,33,15,.58);margin-top:6px;
+             font-family:'Fira Code',monospace">Hilsa Sub-Division</div>
       </div>
     </div>""", unsafe_allow_html=True)
 
@@ -531,47 +1191,67 @@ with st.sidebar:
         icons=["grid-fill","bar-chart-fill","camera-fill","building-fill"],
         default_index=0,
         styles={
-            "container":         {"padding":"0px 4px","background-color":"#1E293B","backgroundColor":"#1E293B"},
-            "icon":              {"color":"#FFC53F","font-size":"14px"},
-            "nav-link":          {"font-size":"13px","color":"rgba(255,255,255,.85)",
-                                  "font-family":"Noto Sans","padding":"10px 14px",
-                                  "margin-bottom":"4px","border-radius":"6px",
-                                  "background-color":"rgba(255,255,255,.05)","backgroundColor":"rgba(255,255,255,.05)"},
-            "nav-link-selected": {"background-color":"#613AF5","backgroundColor":"#613AF5","color":"#FFFFFF","font-weight":"600"},
+            "container":         {"padding":"0px 4px","background-color":"transparent","backgroundColor":"transparent"},
+            "icon":              {"color":"#C3532D","font-size":"13px"},
+            "nav-link":          {"font-size":"12.5px","color":"#5C4526",
+                                  "font-family":"Plus Jakarta Sans, sans-serif",
+                                  "font-weight":"600","padding":"11px 14px",
+                                  "margin-bottom":"5px","border-radius":"10px",
+                                  "letter-spacing":".2px",
+                                  "border":"1px solid rgba(51,33,15,.12)",
+                                  "background-color":"rgba(51,33,15,.03)","backgroundColor":"rgba(51,33,15,.03)",
+                                  "transition":"all 280ms cubic-bezier(.16,1,.3,1)",
+                                  "--hover-color":"rgba(195,83,45,.14)"},
+            "nav-link-selected": {"background":"#C3532D",
+                                  "background-color":"#C3532D","backgroundColor":"#C3532D",
+                                  "color":"#F7EDD6","font-weight":"700",
+                                  "border":"1px solid rgba(51,33,15,.2)",
+                                  "box-shadow":"0 10px 24px -8px rgba(147,49,43,.55)",
+                                  "transition":"all 280ms cubic-bezier(.16,1,.3,1)"},
         },
     )
 
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:1px;background:rgba(255,255,255,.15);margin:0 -8px'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='sb-div'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:5px'>Gemini API Key</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sb-cap'>Gemini API Key</div>", unsafe_allow_html=True)
     raw_key = st.text_input("Gemini API Key", type="password", placeholder="AIza…",
                              value=st.session_state.get("gemini_key",""), label_visibility="collapsed")
     if raw_key and raw_key.strip():
         st.session_state["gemini_key"] = raw_key.strip()
         active_display = st.session_state.get("_gemini_active", _GEMINI_CHAIN[1])
-        st.markdown(f"<div style='font-size:10px;color:#6EE89A;font-family:Fira Code,monospace;padding-left:4px'>✓ Key set · {active_display}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='sb-meta' style='color:#4F7C3A'>✓ Key set · {active_display}</div>", unsafe_allow_html=True)
     else:
         st.session_state["gemini_key"] = ""
-        st.markdown("<div style='font-size:10px;color:#F4A0A3;font-family:Fira Code,monospace;padding-left:4px'>⚠ No key — OCR disabled</div>", unsafe_allow_html=True)
-        st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.4);font-family:Fira Code,monospace;padding-left:4px;margin-top:3px'>aistudio.google.com/apikey</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sb-meta' style='color:#93312B'>⚠ No key — OCR disabled</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sb-meta'>aistudio.google.com/apikey</div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:1px;background:rgba(255,255,255,.15);margin:0 -8px'></div>", unsafe_allow_html=True)
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='sb-div'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:1.5px;font-family:Noto Sans;padding-left:4px;margin-bottom:6px'>फ़िल्टर · Filters</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sb-cap'>फ़िल्टर · Filters</div>", unsafe_allow_html=True)
     gp = st.selectbox("Priority", ["All","High","Medium","Low"], label_visibility="collapsed")
     gb = st.selectbox("Block", ["All"]+sorted(df["Block"].unique().tolist()), label_visibility="collapsed")
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     now = datetime.now()
-    st.markdown(f"<div style='font-family:Fira Code,monospace;font-size:10px;color:rgba(255,255,255,.6);line-height:2;padding-left:4px'>{now.strftime('%d %b %Y  %H:%M')}<br>जनसंख्या: 1,97,309<br>क्षेत्र: 140 km²<br>ग्राम: 56 · प्रखंड: 20</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='sb-meta'>{now.strftime('%d %b %Y · %H:%M')}<br>जनसंख्या <b>1,97,309</b><br>क्षेत्र <b>140 km²</b><br>ग्राम <b>56</b> · प्रखंड <b>20</b></div>", unsafe_allow_html=True)
+
+    # Madhubani fish watermark — the splash motif, resting under the nav
+    st.markdown(f"<div class='sb-fish ms-motif-static'>{fish_svg_static()}</div>",
+                unsafe_allow_html=True)
 
 fdf = df.copy()
 if gp != "All": fdf = fdf[fdf["Priority"]==gp]
 if gb != "All": fdf = fdf[fdf["Block"]==gb]
+
+# ── NAV VEIL — page-transition loader (presentation only) ─────────────
+# The single sanctioned session_state addition of the re-theme: remember
+# the last page so the veil fires exactly once per page CHANGE — never on
+# first arrival (the enter-veil owns that) and never on same-page reruns
+# (filters, uploads, key entry).
+_prev_page = st.session_state.get("_last_page")
+st.session_state["_last_page"] = selected
+if _prev_page is not None and _prev_page != selected:
+    st.markdown('<div class="nav-veil"><i></i></div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -580,18 +1260,10 @@ if gb != "All": fdf = fdf[fdf["Block"]==gb]
 if selected == "Today's Brief":
 
     st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
-    bg1 = hero_css_bg("nalanda_ruins")
-    st.markdown(f"""
-    <div class="ngis-hero">
-      <div class="ngis-hero-bg" style="background-image:{bg1};position:absolute;inset:0"></div>
-      <div class="ngis-hero-over">
-        <div>
-          <h1>Today's Brief</h1>
-          <p>Live grievance status · Nalanda District · {datetime.now().strftime("%d %B %Y, %A")}</p>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    heritage_masthead()
+    hero("Today's Brief", "आज का विवरण",
+         f'Live grievance status · Nalanda District · {datetime.now().strftime("%d %B %Y, %A")}',
+         "nalanda_ruins", "Situation Report")
 
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
@@ -610,31 +1282,51 @@ if selected == "Today's Brief":
     <div class="brief-card">
       <strong>सिस्टम विवरण (System Brief) —</strong>
       कुल {total_len} शिकायतें · आज {today_n} प्राप्त ·
-      सर्वाधिक: <strong style="color:#1B3764">{_html.escape(top_block)}</strong> ·
-      प्रमुख श्रेणी: <strong style="color:#1B6B7B">{_html.escape(top_cat)}</strong> ·
-      {high_n} अत्यावश्यक · निराकरण दर <strong style="color:#1A7A3C">{res_rate}%</strong>
+      सर्वाधिक: <strong style="color:#C3532D">{_html.escape(top_block)}</strong> ·
+      प्रमुख श्रेणी: <strong style="color:#2C4B8F">{_html.escape(top_cat)}</strong> ·
+      {high_n} अत्यावश्यक · निराकरण दर <strong style="color:#4F7C3A">{res_rate}%</strong>
     </div>""", unsafe_allow_html=True)
+
+    # ── Count-up choreography ──────────────────────────────────────────
+    # CSS can interpolate a registered <integer>, so the KPI figures tick up
+    # from zero instead of appearing. Targets are per-card, so the keyframes
+    # are generated from the live values rather than hardcoded.
+    #
+    # Correctness contract: each .kpi-value ALSO declares --kpi-n inline and
+    # keeps the true figure as (transparent) DOM text. Where @property is
+    # unsupported, the counter still resolves against the inline value, so the
+    # card renders the real number un-animated — it can never show a wrong one,
+    # and screen readers always read the real text.
+    _kpi_targets = [len(df), high_n, pending_n, res_rate]
+    _kpi_frames  = "".join(
+        f"@keyframes kpi-c{i+1}{{from{{--kpi-n:0}}to{{--kpi-n:{v}}}}}"
+        f".kpi-row .kpi-card:nth-child({i+1}) .kpi-value{{"
+        f"animation:fade-up 600ms var(--e-out) {380+i*70}ms both,"
+        f"kpi-c{i+1} 1500ms var(--e-out) {380+i*70}ms both}}"
+        for i, v in enumerate(_kpi_targets)
+    )
+    st.markdown(f"<style>{_kpi_frames}</style>", unsafe_allow_html=True)
 
     st.markdown(f"""
     <div class="kpi-row">
       <div class="kpi-card">
-        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">कुल शिकायतें</span> · Total</div>
-        <div class="kpi-value">{len(df)}</div>
+        <div class="kpi-label"><span class="dv">कुल शिकायतें</span> · Total</div>
+        <div class="kpi-value" style="--kpi-n:{len(df)}">{len(df)}</div>
         <div class="kpi-delta">{today_n} आज प्राप्त</div>
       </div>
       <div class="kpi-card k-red">
-        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">अत्यावश्यक</span> · High Priority</div>
-        <div class="kpi-value">{high_n}</div>
+        <div class="kpi-label"><span class="dv">अत्यावश्यक</span> · High Priority</div>
+        <div class="kpi-value" style="--kpi-n:{high_n}">{high_n}</div>
         <div class="kpi-delta down">{high_pct}% of total</div>
       </div>
       <div class="kpi-card k-amb">
-        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">लंबित</span> · Pending</div>
-        <div class="kpi-value">{pending_n}</div>
+        <div class="kpi-label"><span class="dv">लंबित</span> · Pending</div>
+        <div class="kpi-value" style="--kpi-n:{pending_n}">{pending_n}</div>
         <div class="kpi-delta">{pending_pct}% of total</div>
       </div>
       <div class="kpi-card k-green">
-        <div class="kpi-label"><span style="font-family:Noto Sans Devanagari,sans-serif">निराकरण दर</span> · Resolution</div>
-        <div class="kpi-value">{res_rate}%</div>
+        <div class="kpi-label"><span class="dv">निराकरण दर</span> · Resolution</div>
+        <div class="kpi-value pct" style="--kpi-n:{res_rate}">{res_rate}%</div>
         <div class="kpi-delta up">of all registered</div>
       </div>
     </div>""", unsafe_allow_html=True)
@@ -652,14 +1344,14 @@ if selected == "Today's Brief":
         dept_short  = _html.escape(row["Department"].split("(")[0].strip()[:25])
         src         = _html.escape(str(row.get("Source","Manual")))
         block_esc   = _html.escape(str(row["Block"]))
-        status_color= "#C02020" if row["Status"]=="Open" else "#C8820A" if row["Status"]=="In Progress" else "#1A7A3C"
+        status_color= RED if row["Status"]=="Open" else SAFF if row["Status"]=="In Progress" else GREEN
         status_esc  = _html.escape(str(row["Status"]))
         rows_html  += (
             f"<tr>"
             f'<td style="font-family:Fira Code,monospace;color:{NAVY};font-weight:600;text-align:center">{_html.escape(str(row["ID"]))}</td>'
             f'<td style="font-family:Fira Code,monospace;font-size:11px">{_html.escape(str(row["Date"]))}</td>'
             f'<td style="color:{TXT};font-weight:500">{cat_short}</td>'
-            f'<td style="color:#5C5048;font-size:11px">{dept_short}</td>'
+            f'<td style="color:rgba(51,33,15,.58);font-size:10.5px">{dept_short}</td>'
             f'<td style="color:{TXT}">{block_esc}</td>'
             f'<td><span class="{pri_cls}">{pri_sym} {row["Priority"]}</span></td>'
             f'<td class="{age_cls}">{row["Days_Open"]}d</td>'
@@ -694,23 +1386,16 @@ if selected == "Today's Brief":
 # ══════════════════════════════════════════════════════════════════════
 elif selected == "Analytics Suite":
 
-    bg2 = hero_css_bg("rajgir")
-    st.markdown(f"""
-    <div class="ngis-hero">
-      <div class="ngis-hero-bg" style="background-image:{bg2};position:absolute;inset:0"></div>
-      <div class="ngis-hero-over">
-        <div>
-          <h1>Analytics Suite</h1>
-          <p>Power BI-style drill-down · scheme compliance · predictive forecasting · risk intelligence</p>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
+    heritage_masthead()
+    hero("Analytics Suite", "विश्लेषण प्रणाली",
+         "Power BI-style drill-down · scheme compliance · predictive forecasting · risk intelligence",
+         "rajgir", "Spatial Intelligence")
 
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
     # Heatmap & Drill-down for Hilsa Sub-division
-    st.markdown("""<h3 style="font-family: 'Instrument Serif', serif; font-size: 28px; color: #1E3A8A; margin-bottom: 20px;">Hilsa Sub-division Grievance Heatmap</h3>""", unsafe_allow_html=True)
+    st.markdown('<div class="sec-label">हिलसा अनुमंडल · Grievance Heatmap</div>', unsafe_allow_html=True)
 
     hilsa_blocks = ['Hilsa', 'Chandi', 'Ekangarsarai', 'Islampur', 'Karai Parsurai', 'Parbalpur', 'Tharthari']
     
@@ -727,28 +1412,60 @@ elif selected == "Analytics Suite":
             High_Priority=('Priority', lambda x: (x == 'High').sum())
         ).reset_index()
         
+        # The original used mapbox_style="white-bg" specifically to avoid
+        # fetching basemap tiles. This inline Mapbox style spec keeps that
+        # zero-network property but paints the canvas parchment so the map
+        # sits in the manuscript page rather than on a white slab.
+        #
+        # `sources` must be present AND non-empty. Streamlit's frontend strips
+        # empty objects out of the figure spec, so a bare {} reaches mapbox-gl
+        # as a missing key and fails style validation ("missing required
+        # property sources"), which Plotly rethrows as an unexplained
+        # "Mapbox error." in the console. This geojson source is inline, is
+        # referenced by no layer, and fetches nothing, so it satisfies the
+        # validator without giving up the no-tiles property.
+        _parchment_canvas = {
+            "version": 8,
+            "sources": {
+                "ngis-blank": {
+                    "type": "geojson",
+                    "data": {"type": "FeatureCollection", "features": []},
+                }
+            },
+            "layers": [{"id": "ngis-parchment-bg", "type": "background",
+                        "paint": {"background-color": "#EAD7AE"}}],
+        }
         fig = px.choropleth_mapbox(
-            agg_df, 
+            agg_df,
             geojson=geojson_data,
-            locations="Block", 
+            locations="Block",
             featureidkey="properties.Block",
             color="High_Priority",
-            color_continuous_scale="Reds",
+            color_continuous_scale=[[0, "#F2E4BF"], [0.5, "#C3532D"], [1, "#7A2822"]],
             mapbox_style="white-bg", # Hides underlying base map tiles for a clean look
             zoom=9.5,
             center={"lat": 25.25, "lon": 85.35},
             hover_name="Block",
             hover_data={"Total_Reports": True, "High_Priority": True},
-            title="Hilsa Sub-division Static Boundaries"
         )
+        fig.update_traces(marker_line_color="rgba(51,33,15,.45)", marker_line_width=1)
         fig.update_layout(
-            margin={"r":0,"t":40,"l":0,"b":0},
+            margin={"r":0,"t":0,"l":0,"b":0},
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
+            mapbox_style=_parchment_canvas,
+            font=dict(color=MUTED, family="'Plus Jakarta Sans', sans-serif", size=11),
+            hoverlabel=dict(bgcolor="#F9F0DC", bordercolor=NAVY,
+                            font=dict(color=WHITE, family="'Fira Code', monospace")),
+            coloraxis_colorbar=dict(
+                title=dict(text="High<br>Priority", font=dict(color=MUTED, size=9)),
+                tickfont=dict(color=MUTED, size=9), outlinewidth=0,
+                thickness=9, len=.75, xpad=6,
+            ),
             dragmode=False # Disables panning and zooming to make it "static"
         )
         
-        st.markdown("<p style='color: #6B7280; font-size: 14px; margin-bottom: 10px;'>Click on a political boundary below to view detailed grievances.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:rgba(51,33,15,.58);font-size:12px;margin-bottom:12px'>Click a political boundary to drill into its grievances.</p>", unsafe_allow_html=True)
         
         # We use on_select to capture clicks
         selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
@@ -763,7 +1480,7 @@ elif selected == "Analytics Suite":
         
         if selected_block:
             st.markdown(f"---")
-            st.markdown(f"<h4 style='color: #1E3A8A; font-family: \"Instrument Serif\", serif;'>Detailed Problems for {selected_block}</h4>", unsafe_allow_html=True)
+            st.markdown(f"<div class='sec-label'>प्रखंड विवरण · Detailed Problems — {selected_block}</div>", unsafe_allow_html=True)
             block_data = hilsa_fdf[hilsa_fdf['Block'] == selected_block].copy()
             # Sort by priority High to Low (High: 0, Medium: 1, Low: 2)
             block_data['Priority_Rank'] = block_data['Priority'].map({'High': 0, 'Medium': 1, 'Low': 2})
@@ -782,18 +1499,10 @@ elif selected == "Analytics Suite":
 # ══════════════════════════════════════════════════════════════════════
 elif selected == "Field Capture":
     st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
-    bg3 = hero_css_bg("pawapuri")
-    st.markdown(f"""
-    <div class="ngis-hero">
-      <div class="ngis-hero-bg" style="background-image:{bg3};position:absolute;inset:0"></div>
-      <div class="ngis-hero-over">
-        <div>
-          <h1>Field Capture</h1>
-          <p>Janata Darbar digitization terminal · Gemini OCR · auto-classification · digital register</p>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    heritage_masthead()
+    hero("Field Capture", "क्षेत्र संग्रह",
+         "Janata Darbar digitization terminal · Gemini OCR · auto-classification · digital register",
+         "pawapuri", "Capture Terminal")
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
 
     input_mode=st.radio("Input Mode",["📷  Scan Letter (Image)","✍️  Type / Paste Text"],horizontal=True,label_visibility="collapsed")
@@ -869,9 +1578,9 @@ elif selected == "Field Capture":
 
         heic_ok     = _HEIC_OK or _LIBHEIF_OK
         heic_status = "✓ HEIC · JPG · PNG · Camera" if heic_ok else "✗ HEIC unavail · JPG · PNG · Camera"
-        heic_color  = "#1A7A3C" if heic_ok else "#C02020"
+        heic_color  = GREEN if heic_ok else RED
         key_status  = f"✓ Key set ({active_model})" if gemini_key_val else "✗ No key — set in sidebar"
-        key_color   = "#1A7A3C" if gemini_key_val else "#C02020"
+        key_color   = GREEN if gemini_key_val else RED
         st.markdown(f"""
         <div class="processing-note">
           OCR ENGINE  · Google Gemini (auto-fallback chain)<br>
@@ -930,14 +1639,14 @@ elif selected == "Field Capture":
 
             # Schemes
             schemes_html = "".join(
-                f'<div style="background:#EBF0FA;border:1px solid #B8CCE8;border-radius:2px;'
-                f'padding:4px 8px;font-size:11px;color:#1B3764;margin-bottom:3px">'
+                f'<div style="background:rgba(195,83,45,.07);border:1px solid rgba(195,83,45,.28);border-radius:8px;'
+                f'padding:6px 10px;font-size:10.5px;color:rgba(51,33,15,.78);margin-bottom:4px">'
                 f'<strong>केंद्रीय:</strong> {_html.escape(str(s))}</div>'
                 for s in clf.get("central_schemes",[])
             )
             schemes_html += "".join(
-                f'<div style="background:#FEF3EB;border:1px solid #F5C89A;border-radius:2px;'
-                f'padding:4px 8px;font-size:11px;color:#7A3A0A;margin-bottom:3px">'
+                f'<div style="background:rgba(233,162,27,.1);border:1px solid rgba(233,162,27,.35);border-radius:8px;'
+                f'padding:6px 10px;font-size:10.5px;color:rgba(51,33,15,.78);margin-bottom:4px">'
                 f'<strong>बिहार:</strong> {_html.escape(str(s))}</div>'
                 for s in clf.get("bihar_schemes",[])
             )
@@ -947,9 +1656,9 @@ elif selected == "Field Capture":
                 st.markdown('<div class="sec-label">मूल पाठ · OCR Transcription</div>', unsafe_allow_html=True)
                 with st.expander("▼ पूर्ण हिंदी पाठ देखें · View full Hindi transcription"):
                     st.markdown(
-                        f'<div style="background:#F5F3EE;border:1px solid #D4C9B8;border-radius:2px;'
-                        f'padding:12px 14px;font-family:Noto Sans Devanagari,Noto Sans,sans-serif;'
-                        f'font-size:13px;color:#1A1A2E;line-height:1.9;white-space:pre-wrap">'
+                        f'<div class="dv" style="background:rgba(51,33,15,.04);border:1px solid rgba(51,33,15,.16);'
+                        f'border-radius:10px;padding:16px 18px;'
+                        f'font-size:14px;color:#33210F;line-height:2;white-space:pre-wrap">'
                         f'{_html.escape(str(ocr["transcription"]))}</div>',
                         unsafe_allow_html=True
                     )
@@ -995,11 +1704,11 @@ elif selected == "Field Capture":
   <div class="section-hdr">प्रेषण · Forwarding Officers (प्रथम: {first_prashan})</div>
   <div class="prashan-row">{prashan_html}</div>
   <div class="section-hdr">न्यायाधिकार क्षेत्र · Jurisdiction Chain</div>
-  <div style="border:1px solid #D4C9B8;padding:10px 12px">
+  <div style="border:1px solid rgba(51,33,15,.09);padding:12px">
     <div class="jur-chain-light">{jur_html}</div>
   </div>
   <div class="section-hdr">संबंधित योजनाएं · Applicable Schemes</div>
-  <div style="border:1px solid #D4C9B8;padding:10px 12px">{schemes_html}</div>
+  <div style="border:1px solid rgba(51,33,15,.09);padding:12px">{schemes_html}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1031,12 +1740,12 @@ elif selected == "Field Capture":
 
         else:
             st.markdown("""
-            <div style="text-align:center;padding:60px 20px;font-family:'Noto Sans',sans-serif;color:#8A7A6A">
-              <div style="font-size:48px;margin-bottom:12px">📋</div>
-              <div style="font-size:15px;font-weight:600;color:#1B3764;margin-bottom:6px">
+            <div class="brief-card" style="text-align:center;padding:72px 20px;border-left:1px solid rgba(51,33,15,.16)">
+              <div style="font-size:44px;margin-bottom:14px;opacity:.5">📋</div>
+              <div class="dv" style="font-size:17px;font-weight:600;color:#33210F;margin-bottom:8px">
                 जनता दरबार शिकायत पत्रावली
               </div>
-              <div style="font-size:13px">Upload a HEIC/JPG/PNG letter image or paste text on the left</div>
+              <div style="font-size:12px;color:rgba(51,33,15,.58)">Upload a HEIC/JPG/PNG letter image or paste text on the left</div>
             </div>""", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1047,18 +1756,10 @@ elif selected == "Field Capture":
 # ══════════════════════════════════════════════════════════════════════
 elif selected == "Scheme Intelligence":
     st.markdown('<div class="tricolor-strip"></div>', unsafe_allow_html=True)
-    bg4 = hero_css_bg("nalanda_monument")
-    st.markdown(f"""
-    <div class="ngis-hero">
-      <div class="ngis-hero-bg" style="background-image:{bg4};position:absolute;inset:0"></div>
-      <div class="ngis-hero-over">
-        <div>
-          <h1>Scheme Intelligence</h1>
-          <p>Scheme mapping · SLA targets · jurisdiction escalation chains · NITI Aayog indicators</p>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    heritage_masthead()
+    hero("Scheme Intelligence", "योजना बुद्धिमत्ता",
+         "Scheme mapping · SLA targets · jurisdiction escalation chains · NITI Aayog indicators",
+         "nalanda_monument", "Programme Registry")
     st.markdown('<div class="ngis-body">', unsafe_allow_html=True)
     st.markdown('<div class="sec-label">सभी 9 श्रेणियां — योजना मानचित्रण · All 9 Categories — Scheme Mapping</div>', unsafe_allow_html=True)
 
@@ -1092,15 +1793,15 @@ elif selected == "Scheme Intelligence":
   <div class="scheme-entry-header">
     <span style="font-size:20px">{icon_esc}</span>
     <div>
-      <div style="color:#FFFFFF;font-weight:600;font-size:13px;font-family:Noto Sans,sans-serif">{cat_short}</div>
-      <div style="color:rgba(255,255,255,.5);font-size:10px;font-family:Fira Code,monospace">{dept_short}</div>
+      <div style="color:#33210F;font-weight:700;font-size:12.5px">{cat_short}</div>
+      <div style="color:rgba(51,33,15,.58);font-size:9px;font-family:'Fira Code',monospace;margin-top:2px">{dept_short}</div>
     </div>
   </div>
   <div style="padding:10px 12px">
     {c_html}{s_html}
-    <div style="margin-top:8px;font-size:9px;color:#1B3764;text-transform:uppercase;letter-spacing:1px;font-family:Noto Sans,sans-serif;font-weight:600;margin-bottom:4px">प्रेषण · Forwarding</div>
+    <div style="margin-top:8px;font-size:8.5px;color:rgba(51,33,15,.58);text-transform:uppercase;letter-spacing:1.8px;font-weight:700;margin-bottom:6px">प्रेषण · Forwarding</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">{prashan_boxes}</div>
-    <div style="font-size:9px;color:#1B3764;text-transform:uppercase;letter-spacing:1px;font-family:Noto Sans,sans-serif;font-weight:600;margin-bottom:4px">न्यायाधिकार · Jurisdiction</div>
+    <div style="font-size:8.5px;color:rgba(51,33,15,.58);text-transform:uppercase;letter-spacing:1.8px;font-weight:700;margin-bottom:6px">न्यायाधिकार · Jurisdiction</div>
     <div style="line-height:2;font-size:10px">{jur_html}</div>
   </div>
 </div>""", unsafe_allow_html=True)
