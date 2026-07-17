@@ -12,6 +12,7 @@ import io
 import time
 import warnings
 import html as _html  # ← for safe escaping of dynamic values into HTML
+from splash import render_splash, corner_svg_static, fish_svg_static
 
 # ══════════════════════════════════════════════════════════════════════
 # HEIC SUPPORT
@@ -113,6 +114,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── THE THRESHOLD — Madhubani splash, once per session ────────────────
+# Gate sits BEFORE the master CSS block so the splash owns the whole
+# cascade; st.stop() fires before the sidebar is built, so none exists.
+if not st.session_state.get("entered", False):
+    render_splash()
+    st.stop()
 
 # ══════════════════════════════════════════════════════════════════════
 # GEMINI
@@ -235,27 +243,27 @@ Return ONLY a valid JSON object — no markdown, no backticks:
 # ══════════════════════════════════════════════════════════════════════
 # THEME
 # ══════════════════════════════════════════════════════════════════════
-# Midnight Command Console — dark console palette.
-# Hues are carried over from UX4G rather than discarded: the primary is the
-# UX4G violet #613AF5 lifted to #7C5CFF so it clears 4.5:1 on a #0A0B14
-# surface. Names are unchanged so every existing call site re-themes for free.
-NAVY   = "#7C5CFF"  # Primary violet (UX4G #613AF5, lifted for dark surfaces)
-SAFF   = "#F5A524"  # Heritage saffron
-GREEN  = "#34D399"  # Success
-RED    = "#FB5E5E"  # Danger
-AMBER  = "#F5A524"  # Warning
-TEAL   = "#22D3EE"  # Info cyan
-MUTED  = "#8A90A8"  # Muted slate
-LGRID  = "#232741"  # Hairline grid
-LBG    = "#11142290" # Translucent surface
-WHITE  = "#E7E9F2"  # Primary text on dark
-TXT    = "#E7E9F2"  # Body text on dark
+# The Manuscript Console — Madhubani heritage palette on parchment,
+# shared with the splash (splash.py heritage tokens). Constant NAMES are
+# historical (from the retired dark console) so every existing call site
+# re-themes for free; only the values changed.
+NAVY   = "#C3532D"  # Primary terracotta (splash --sp-terracotta)
+SAFF   = "#E9A21B"  # Heritage saffron — decorative fills/rules, never text
+GREEN  = "#4F7C3A"  # Success (splash leaf)
+RED    = "#93312B"  # Danger (splash madder)
+AMBER  = "#E9A21B"  # Warning
+TEAL   = "#2C4B8F"  # Info (splash indigo)
+MUTED  = "#847460"  # Muted ink (ink at ~58% over parchment)
+LGRID  = "#DCCEB1"  # Hairline grid on parchment
+LBG    = "#F9F0DC90" # Translucent surface
+WHITE  = "#33210F"  # Primary text = manuscript ink (name historical)
+TXT    = "#33210F"  # Body text
 
-# Dark canvas tokens
-INK    = "#07080F"  # Deepest background
-SURF   = "#0F1220"  # Raised surface
-GLASS  = "rgba(255,255,255,.045)"
-HAIR   = "rgba(255,255,255,.09)"
+# Parchment canvas tokens
+INK    = "#F4E7C8"  # Canvas (name historical — was the dark ink background)
+SURF   = "#F9F0DC"  # Raised paper surface
+GLASS  = "rgba(51,33,15,.05)"
+HAIR   = "rgba(51,33,15,.16)"
 
 def ct(fig, title="", h=None):
     kw = dict(
@@ -272,9 +280,9 @@ def ct(fig, title="", h=None):
         legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(0,0,0,0)",
                     font=dict(color=MUTED, size=11), orientation="h",
                     yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hoverlabel=dict(bgcolor="#161A2E", bordercolor=NAVY,
+        hoverlabel=dict(bgcolor="#F9F0DC", bordercolor=NAVY,
                         font=dict(color=WHITE, family="'Fira Code', monospace")),
-        colorway=[NAVY, TEAL, SAFF, GREEN, RED, "#C4B5FD"],
+        colorway=[NAVY, TEAL, SAFF, GREEN, RED, "#5B79C4"],
     )
     if h: kw["height"] = h
     fig.update_layout(**kw)
@@ -282,13 +290,18 @@ def ct(fig, title="", h=None):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# DESIGN SYSTEM — "Midnight Command Console"
+# DESIGN SYSTEM — "The Manuscript Console"
 # Presentation only. No markup below carries data or logic.
 #
-# Direction: Modern Dark (Cinema) + Aurora UI + Glassmorphism, carrying the
-# Nalanda heritage masthead and Devanagari-first display type.
-# The UX4G violet is retained as a hue (#613AF5 → #7C5CFF, lifted to clear
-# 4.5:1 on #07080F) rather than discarded, so the government lineage reads.
+# Direction: the splash's Madhubani manuscript extends across the whole
+# app — parchment canvas, manuscript ink, terracotta/madder/indigo/saffron
+# accents, double-line frame and corner spirals carried in from splash.py.
+# Supersedes the Midnight Command Console (dark) system, 2026-07-17.
+#
+# Token NAMES are historical (--ink, --violet, --cyan …) so the hundreds of
+# var() call sites re-theme for free; only the VALUES changed. Contrast
+# rules: ink on parchment ≈ 11:1; madder for small accent text; terracotta
+# for large text/UI; saffron is decorative only (rules, fills — never text).
 #
 # Streamlit constraints this works within:
 #   · st.markdown is sanitised by DOMPurify — <script> never executes.
@@ -309,12 +322,16 @@ st.markdown("""
 @property --glow    { syntax:'<number>';  initial-value:0; inherits:false }
 
 :root{
-  --ink:#07080F; --ink-2:#0A0B14; --surf:#0F1220; --surf-2:#141834;
-  --violet:#7C5CFF; --violet-dim:#5B3FD1; --cyan:#22D3EE;
-  --saffron:#F5A524; --green:#34D399; --red:#FB5E5E;
-  --tx:#E7E9F2; --tx-dim:#A7AECB; --tx-mute:#8A90A8;
-  --hair:rgba(255,255,255,.09); --hair-2:rgba(255,255,255,.055);
-  --glass:rgba(255,255,255,.045); --glass-2:rgba(255,255,255,.028);
+  --ink:#F4E7C8; --ink-2:#EAD7AE; --surf:#F9F0DC; --surf-2:#EFE2C2;
+  --violet:#C3532D; --violet-dim:#93312B; --cyan:#2C4B8F;
+  --saffron:#E9A21B; --green:#4F7C3A; --red:#93312B;
+  --tx:#33210F; --tx-dim:rgba(51,33,15,.78); --tx-mute:rgba(51,33,15,.58);
+  --hair:rgba(51,33,15,.16); --hair-2:rgba(51,33,15,.09);
+  --glass:rgba(51,33,15,.05); --glass-2:rgba(51,33,15,.03);
+
+  /* splash heritage tokens — let motif SVGs from splash.py render as-is */
+  --sp-ink:#33210F; --sp-terracotta:#C3532D; --sp-madder:#93312B;
+  --sp-indigo:#2C4B8F; --sp-saffron:#E9A21B; --sp-leaf:#4F7C3A;
 
   --e-out:cubic-bezier(.16,1,.3,1);
   --e-back:cubic-bezier(.34,1.56,.64,1);
@@ -331,23 +348,42 @@ footer{visibility:hidden}header{visibility:hidden}.stDeployButton{display:none}
 /* ══ CANVAS ══════════════════════════════════════════════════════════ */
 .stApp{background:var(--ink)!important;color:var(--tx)}
 
-/* Aurora field — drifts continuously behind every surface */
+/* Parchment bloom + vignette — same field as the splash stage (static) */
 [data-testid="stAppViewContainer"]::before{
-  content:"";position:fixed;inset:-25%;z-index:0;pointer-events:none;
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
-    radial-gradient(38% 38% at 18% 22%, rgba(124,92,255,.34), transparent 68%),
-    radial-gradient(32% 32% at 82% 12%, rgba(34,211,238,.22), transparent 68%),
-    radial-gradient(42% 42% at 68% 82%, rgba(245,165,36,.15), transparent 68%),
-    radial-gradient(30% 30% at 12% 88%, rgba(52,211,153,.13), transparent 68%);
-  filter:blur(70px) saturate(1.25);
-  animation:aurora 26s var(--e-soft) infinite alternate;
+    radial-gradient(90% 70% at 50% 30%, #F7EDD6 0%, transparent 60%),
+    radial-gradient(120% 95% at 50% 42%, transparent 55%,
+      rgba(147,49,43,.05) 78%, rgba(51,33,15,.13) 100%);
 }
-/* Film grain — kills gradient banding, adds a photographic surface */
+/* Film grain — the splash's parchment tooth, multiplied into the paper */
 [data-testid="stAppViewContainer"]::after{
-  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.22;
-  mix-blend-mode:overlay;
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.16;
+  mix-blend-mode:multiply;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
+/* Double-line manuscript frame — the splash border, carried in. Fixed,
+   decorative, pointer-transparent; ink outer pass, terracotta inner. */
+.stApp::before{
+  content:"";position:fixed;inset:9px;z-index:120;pointer-events:none;
+  border:1.5px solid rgba(51,33,15,.4);
+}
+.stApp::after{
+  content:"";position:fixed;inset:14px;z-index:120;pointer-events:none;
+  border:1px solid rgba(195,83,45,.35);
+}
+/* Corner spirals (splash _corner_svg, rendered static) */
+.ms-corner{position:fixed;width:64px;height:64px;z-index:121;
+  pointer-events:none;opacity:.5}
+.ms-corner svg{width:100%;height:100%;display:block}
+.ms-c-tl{top:20px;left:20px}
+.ms-c-tr{top:20px;right:20px;transform:rotate(90deg)}
+.ms-c-br{bottom:20px;right:20px;transform:rotate(180deg)}
+.ms-c-bl{bottom:20px;left:20px;transform:rotate(270deg)}
+/* Splash motifs arrive pre-drawn: neutralise the draw/fill choreography
+   classes (their keyframes live only in splash CSS) */
+.ms-motif-static .d{stroke-dasharray:none}
+.ms-motif-static .f{fill-opacity:var(--fo,1)}
 .main .block-container{
   padding:0 46px 90px!important;max-width:1560px!important;
   position:relative;z-index:1;
@@ -367,8 +403,8 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
   animation:fade-down 700ms var(--e-out) both;
 }
 .ngis-mast::after{
-  content:"";position:absolute;left:0;bottom:-1px;height:1px;width:100%;
-  background:linear-gradient(90deg,var(--violet),var(--cyan),transparent 72%);
+  content:"";position:absolute;left:0;bottom:-1px;height:2px;width:100%;
+  background:linear-gradient(90deg,var(--saffron),var(--violet),transparent 72%);
   transform:scaleX(0);transform-origin:left;
   animation:draw-x 1100ms var(--e-out) 260ms both;
 }
@@ -381,13 +417,13 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
   position:relative;
 }
 .mast-seal::before{
-  content:"";position:absolute;inset:2px;border-radius:50%;background:var(--ink-2);
+  content:"";position:absolute;inset:2px;border-radius:50%;background:var(--surf);
 }
 .mast-seal span{position:relative;z-index:1}
 .mast-hi{
   font-family:'Noto Serif Devanagari',serif;font-size:30px;font-weight:600;
   letter-spacing:-.5px;
-  background:linear-gradient(92deg,#FFFFFF 8%,var(--violet) 52%,var(--cyan) 96%);
+  background:linear-gradient(92deg,var(--tx) 8%,var(--violet-dim) 52%,var(--violet) 96%);
   -webkit-background-clip:text;background-clip:text;color:transparent;
   background-size:220% 100%;
   animation:sheen-text 7s var(--e-soft) infinite;
@@ -408,34 +444,39 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 .mast-live{display:inline-flex;align-items:center;gap:6px;color:var(--green)}
 .mast-live i{
   width:6px;height:6px;border-radius:50%;background:var(--green);
-  box-shadow:0 0 0 0 rgba(52,211,153,.7);animation:beat 2s var(--e-soft) infinite;
+  box-shadow:0 0 0 0 rgba(79,124,58,.7);animation:beat 2s var(--e-soft) infinite;
 }
 
 /* ══ TRICOLOUR ═══════════════════════════════════════════════════════ */
 .tricolor-strip{
-  height:2px;width:100%;position:relative;overflow:hidden;border-radius:2px;
-  background:linear-gradient(90deg,#FF9933 0 33%,#F3F3F3 33% 66%,#138808 66% 100%);
+  height:3px;width:100%;position:relative;overflow:hidden;border-radius:2px;
+  /* heritage strip — the splash's tick-strip colours, not the flag
+     (the flag's white band vanishes on parchment) */
+  background:linear-gradient(90deg,var(--violet) 0 33%,var(--saffron) 33% 66%,var(--cyan) 66% 100%);
   opacity:.85;transform-origin:left;
   animation:draw-x 800ms var(--e-out) both;
 }
 .tricolor-strip::after{
   content:"";position:absolute;inset:0;width:34%;
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,.9),transparent);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
   animation:sheen 3.6s var(--e-soft) 900ms infinite;
 }
 
 /* ══ HERO ════════════════════════════════════════════════════════════ */
+/* The hero is a dark photographic PLATE set into the parchment page —
+   like a tipped-in plate in a manuscript. Overlay text stays light, so
+   its colours are pinned here (the --tx tokens are ink now). */
 .ngis-hero{
   position:relative;width:100%;height:390px;overflow:hidden;
   border-radius:var(--r-lg);margin:18px 0 30px;
-  border:1px solid var(--hair);
-  box-shadow:0 30px 80px -20px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.03) inset;
+  border:1px solid rgba(51,33,15,.45);
+  box-shadow:0 24px 60px -22px rgba(51,33,15,.55), 0 0 0 4px var(--surf), 0 0 0 5px rgba(51,33,15,.25);
   animation:hero-in 900ms var(--e-out) both;
   isolation:isolate;
 }
 .ngis-hero-bg{
   width:100%;height:100%;background-size:cover;background-position:center;
-  filter:saturate(.55) contrast(1.08) brightness(.62);
+  filter:saturate(.6) contrast(1.05) brightness(.66) sepia(.28);
   transform-origin:center;
   animation:ken 30s var(--e-soft) infinite alternate;
   will-change:transform;
@@ -444,14 +485,14 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 .ngis-hero::before{
   content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
   background:
-    linear-gradient(105deg, rgba(7,8,15,.97) 0%, rgba(10,11,20,.82) 42%, rgba(124,92,255,.30) 78%, rgba(34,211,238,.26) 100%);
+    linear-gradient(105deg, rgba(26,16,9,.96) 0%, rgba(51,33,15,.78) 42%, rgba(195,83,45,.32) 78%, rgba(233,162,27,.24) 100%);
   mix-blend-mode:multiply;
 }
 .ngis-hero::after{
   content:"";position:absolute;inset:0;z-index:2;pointer-events:none;
   background:
-    radial-gradient(90% 130% at 0% 100%, rgba(124,92,255,.24), transparent 62%),
-    linear-gradient(0deg, rgba(7,8,15,.9) 0%, transparent 55%);
+    radial-gradient(90% 130% at 0% 100%, rgba(147,49,43,.28), transparent 62%),
+    linear-gradient(0deg, rgba(26,16,9,.9) 0%, transparent 55%);
 }
 .ngis-hero-over{
   position:absolute;inset:0;z-index:3;display:flex;align-items:flex-end;
@@ -460,20 +501,20 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 .hero-kicker{
   display:inline-flex;align-items:center;gap:9px;margin-bottom:16px;
   padding:6px 13px;border-radius:100px;
-  border:1px solid rgba(255,255,255,.16);
-  background:rgba(255,255,255,.06);
+  border:1px solid rgba(244,231,200,.28);
+  background:rgba(244,231,200,.09);
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   font-family:'Fira Code',monospace;font-size:9.5px;letter-spacing:2.4px;
-  text-transform:uppercase;color:var(--tx-dim);
+  text-transform:uppercase;color:#EAD7AE;
   animation:fade-up 700ms var(--e-out) 180ms both;
 }
-.hero-kicker i{width:5px;height:5px;border-radius:50%;background:var(--cyan);
-  box-shadow:0 0 10px var(--cyan);animation:beat 2.4s var(--e-soft) infinite}
+.hero-kicker i{width:5px;height:5px;border-radius:50%;background:var(--saffron);
+  box-shadow:0 0 10px var(--saffron);animation:beat 2.4s var(--e-soft) infinite}
 .ngis-hero h1{
   font-family:'Instrument Serif',serif!important;
   font-size:clamp(2.6rem,5vw,4.4rem)!important;font-weight:400!important;
   line-height:.98!important;letter-spacing:-1.6px!important;margin:0 0 6px!important;
-  color:#fff!important;
+  color:#F7EDD6!important;
   animation:fade-up 800ms var(--e-out) 300ms both;
 }
 .ngis-hero .hero-hi{
@@ -486,13 +527,13 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
   line-height:1.55;   /* clears Devanagari matras — see .mast-hi */
 }
 .ngis-hero p{
-  color:var(--tx-dim)!important;font-size:13px!important;margin:10px 0 0!important;
+  color:rgba(244,231,200,.85)!important;font-size:13px!important;margin:10px 0 0!important;
   letter-spacing:.5px;max-width:62ch;line-height:1.7;
   animation:fade-up 800ms var(--e-out) 420ms both;
 }
 .hero-rule{
-  height:1px;width:0;margin:16px 0 0;
-  background:linear-gradient(90deg,var(--violet),var(--cyan),transparent);
+  height:2px;width:0;margin:16px 0 0;
+  background:linear-gradient(90deg,var(--saffron),rgba(233,162,27,.4),transparent);
   animation:rule-grow 1200ms var(--e-out) 520ms both;
 }
 /* Decorative parallax only — if scroll timelines are unsupported this is
@@ -505,11 +546,12 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
   }
 }
 
-/* ══ GLASS PRIMITIVE ═════════════════════════════════════════════════ */
+/* ══ PAPER PRIMITIVE ═════════════════════════════════════════════════
+   Cards are raised paper leaves on the parchment — no glass, no blur. */
 .brief-card,.kpi-card,.reg-wrap,.scheme-entry,.reg-ticket,.processing-note{
-  background:linear-gradient(180deg,var(--glass),var(--glass-2))!important;
-  backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);
+  background:var(--surf)!important;
   border:1px solid var(--hair)!important;
+  box-shadow:0 6px 22px -12px rgba(51,33,15,.28);
 }
 
 .brief-card{
@@ -519,7 +561,7 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
   animation:fade-up var(--d-slow) var(--e-out) 120ms both;
   transition:transform var(--d) var(--e-soft),box-shadow var(--d) var(--e-soft);
 }
-.brief-card:hover{transform:translateY(-2px);box-shadow:0 18px 44px -18px rgba(124,92,255,.6)}
+.brief-card:hover{transform:translateY(-2px);box-shadow:0 18px 44px -18px rgba(51,33,15,.4)}
 .brief-card strong{color:var(--tx)!important}
 
 /* ══ KPI ═════════════════════════════════════════════════════════════ */
@@ -550,15 +592,15 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
    the same at rest and costs nothing. */
 .kpi-card::after{
   content:"";position:absolute;inset:0;pointer-events:none;opacity:0;
-  background:radial-gradient(60% 90% at 50% 0%, rgba(124,92,255,.30), transparent 70%);
+  background:radial-gradient(60% 90% at 50% 0%, rgba(195,83,45,.14), transparent 70%);
   transition:opacity var(--d-slow) var(--e-soft);
 }
 .kpi-card:hover::after{opacity:1}
-.kpi-card.k-red:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(251,94,94,.28), transparent 70%)}
-.kpi-card.k-green:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(52,211,153,.26), transparent 70%)}
-.kpi-card.k-amb:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(245,165,36,.26), transparent 70%)}
-.kpi-card:hover{transform:translateY(-6px);border-color:rgba(255,255,255,.2)!important;
-  box-shadow:0 28px 60px -22px rgba(0,0,0,.9)}
+.kpi-card.k-red:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(147,49,43,.14), transparent 70%)}
+.kpi-card.k-green:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(79,124,58,.14), transparent 70%)}
+.kpi-card.k-amb:hover::after{background:radial-gradient(60% 90% at 50% 0%, rgba(233,162,27,.16), transparent 70%)}
+.kpi-card:hover{transform:translateY(-6px);border-color:rgba(51,33,15,.32)!important;
+  box-shadow:0 24px 50px -20px rgba(51,33,15,.45)}
 .kpi-label{
   font-size:9px!important;text-transform:uppercase!important;letter-spacing:2.2px!important;
   color:var(--tx-mute)!important;font-weight:700!important;margin-bottom:14px!important;
@@ -579,15 +621,15 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 }
 .kpi-value::after{
   content:counter(kpi);position:absolute;left:0;top:0;
-  background:linear-gradient(180deg,#FFFFFF,var(--violet));
+  background:linear-gradient(180deg,var(--tx),var(--violet));
   -webkit-background-clip:text;background-clip:text;color:transparent;
 }
 .kpi-value.pct::after{content:counter(kpi) "%"}
-.k-red .kpi-value::after{background:linear-gradient(180deg,#FFFFFF,var(--red));
+.k-red .kpi-value::after{background:linear-gradient(180deg,var(--tx),var(--red));
   -webkit-background-clip:text;background-clip:text}
-.k-green .kpi-value::after{background:linear-gradient(180deg,#FFFFFF,var(--green));
+.k-green .kpi-value::after{background:linear-gradient(180deg,var(--tx),var(--green));
   -webkit-background-clip:text;background-clip:text}
-.k-amb .kpi-value::after{background:linear-gradient(180deg,#FFFFFF,var(--saffron));
+.k-amb .kpi-value::after{background:linear-gradient(180deg,var(--tx),#B57608);
   -webkit-background-clip:text;background-clip:text}
 .kpi-delta{font-size:10.5px!important;font-family:'Fira Code',monospace!important;
   color:var(--tx-mute)!important;position:relative;z-index:1}
@@ -606,12 +648,13 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 }
 .sec-label::before{
   content:"";width:5px;height:5px;border-radius:50%;background:var(--violet);
-  box-shadow:0 0 10px var(--violet);flex-shrink:0;
+  box-shadow:0 0 8px rgba(195,83,45,.6);flex-shrink:0;
   animation:beat 2.6s var(--e-soft) infinite;
 }
+/* the splash's saffron rule, drawn under every section label */
 .sec-label::after{
-  content:"";position:absolute;left:0;bottom:0;width:100%;height:1px;
-  background:linear-gradient(90deg,var(--violet) 0%,rgba(124,92,255,.28) 34%,transparent 78%);
+  content:"";position:absolute;left:0;bottom:0;width:100%;height:2px;
+  background:linear-gradient(90deg,var(--saffron) 0%,rgba(233,162,27,.35) 34%,transparent 78%);
   transform:scaleX(0);transform-origin:left;
   animation:draw-x 900ms var(--e-out) 140ms both;
 }
@@ -625,7 +668,7 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 }
 .reg-table{width:100%;border-collapse:collapse;font-size:12.5px;
   font-family:'Plus Jakarta Sans',sans-serif}
-.reg-table thead tr{background:rgba(255,255,255,.035)!important;border:none}
+.reg-table thead tr{background:rgba(51,33,15,.05)!important;border:none}
 .reg-table thead th{
   padding:14px 16px!important;text-align:left;border:none!important;
   border-bottom:1px solid var(--hair)!important;
@@ -657,7 +700,7 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
   color:var(--tx-dim)!important;
   transition:background var(--d-fast) var(--e-soft),color var(--d-fast) var(--e-soft);
 }
-.reg-table tbody tr:hover td{background:rgba(124,92,255,.11)!important;color:var(--tx)!important}
+.reg-table tbody tr:hover td{background:rgba(195,83,45,.09)!important;color:var(--tx)!important}
 .reg-table tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--violet)}
 .p-high{color:var(--red)!important;font-weight:600;font-family:'Fira Code',monospace;font-size:9.5px}
 .p-med{color:var(--saffron)!important;font-weight:600;font-family:'Fira Code',monospace;font-size:9.5px}
@@ -666,24 +709,24 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 .age-amb{color:var(--saffron)!important;font-family:'Fira Code',monospace}
 .age-ok{color:var(--tx-mute)!important;font-family:'Fira Code',monospace}
 .src-badge{
-  background:rgba(124,92,255,.14)!important;color:var(--violet)!important;
-  border:1px solid rgba(124,92,255,.3)!important;border-radius:100px!important;
+  background:rgba(195,83,45,.1)!important;color:var(--violet)!important;
+  border:1px solid rgba(195,83,45,.35)!important;border-radius:100px!important;
   padding:3px 9px!important;font-size:8.5px!important;
   font-family:'Fira Code',monospace;white-space:nowrap;letter-spacing:.4px;
   transition:all var(--d-fast) var(--e-soft);
 }
-.reg-table tbody tr:hover .src-badge{background:var(--violet)!important;color:#fff!important;
-  box-shadow:0 0 18px rgba(124,92,255,.6)}
+.reg-table tbody tr:hover .src-badge{background:var(--violet)!important;color:#F7EDD6!important;
+  box-shadow:0 0 14px rgba(195,83,45,.4)}
 
 /* ══ REGISTER TICKET ═════════════════════════════════════════════════ */
 .reg-ticket{
   border-radius:var(--r)!important;overflow:hidden;
-  border:1px solid rgba(124,92,255,.3)!important;
+  border:1px solid rgba(195,83,45,.4)!important;
   animation:pop-in 620ms var(--e-out) both;
-  box-shadow:0 30px 70px -26px rgba(0,0,0,.9);
+  box-shadow:0 24px 55px -24px rgba(51,33,15,.5);
 }
 .reg-ticket-header{
-  background:linear-gradient(120deg,var(--violet-dim),var(--surf-2) 70%)!important;
+  background:linear-gradient(120deg,var(--violet),var(--violet-dim))!important;
   padding:16px!important;text-align:center;position:relative;overflow:hidden;
 }
 .reg-ticket-header::after{
@@ -692,14 +735,14 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
   animation:sheen 4.2s var(--e-soft) 600ms infinite;
 }
 .reg-ticket-h1{font-family:'Noto Serif Devanagari',serif!important;font-size:15px!important;
-  font-weight:600!important;color:#fff!important}
-.reg-ticket-h2{color:rgba(255,255,255,.6)!important;font-size:10px!important;
+  font-weight:600!important;color:#F7EDD6!important}
+.reg-ticket-h2{color:rgba(247,237,214,.75)!important;font-size:10px!important;
   letter-spacing:.6px;margin-top:3px}
-.reg-ticket-h3{color:var(--saffron)!important;font-size:11.5px!important;font-weight:600;
+.reg-ticket-h3{color:#FFD59B!important;font-size:11.5px!important;font-weight:600;
   margin-top:7px;font-family:'Noto Serif Devanagari',serif!important}
 .reg-ticket table{width:100%;border-collapse:collapse}
 .reg-ticket .lbl{
-  background:rgba(255,255,255,.03)!important;
+  background:rgba(51,33,15,.04)!important;
   border:1px solid var(--hair-2)!important;padding:9px 12px!important;width:135px;
   font-size:8.5px!important;color:var(--tx-mute)!important;font-weight:700!important;
   text-transform:uppercase;letter-spacing:1px;vertical-align:top;
@@ -713,7 +756,7 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 }
 .reg-ticket .val.mono{font-family:'Fira Code',monospace}
 .reg-ticket .section-hdr{
-  background:rgba(124,92,255,.16)!important;padding:7px 12px!important;
+  background:rgba(195,83,45,.1)!important;padding:7px 12px!important;
   font-size:8.5px!important;font-weight:700!important;color:var(--violet)!important;
   text-transform:uppercase;letter-spacing:1.6px;
   border-top:1px solid var(--hair-2);border-bottom:1px solid var(--hair-2);
@@ -721,49 +764,49 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 .prashan-row{border:1px solid var(--hair-2)!important;padding:11px 12px!important;
   display:flex;flex-wrap:wrap;gap:7px;align-items:center}
 .prashan-box{
-  border:1px solid rgba(124,92,255,.35)!important;border-radius:100px!important;
+  border:1px solid rgba(195,83,45,.4)!important;border-radius:100px!important;
   padding:5px 12px!important;font-size:9.5px!important;font-weight:600;
-  color:var(--violet)!important;background:rgba(124,92,255,.1)!important;
-  letter-spacing:.3px;
+  color:var(--violet)!important;background:rgba(195,83,45,.08)!important;
+  letter-spacing:.3px;white-space:nowrap;
   transition:transform var(--d-fast) var(--e-back),background var(--d-fast) var(--e-soft),
              color var(--d-fast) var(--e-soft),box-shadow var(--d-fast) var(--e-soft);
 }
-.prashan-box.highlight{background:var(--violet)!important;color:#fff!important;
-  box-shadow:0 0 22px rgba(124,92,255,.55)}
-.prashan-box:hover{transform:translateY(-2px);background:var(--violet)!important;color:#fff!important;
-  box-shadow:0 0 22px rgba(124,92,255,.55)}
+.prashan-box.highlight{background:var(--violet)!important;color:#F7EDD6!important;
+  box-shadow:0 0 16px rgba(195,83,45,.4)}
+.prashan-box:hover{transform:translateY(-2px);background:var(--violet)!important;color:#F7EDD6!important;
+  box-shadow:0 0 16px rgba(195,83,45,.4)}
 .jur-chain-light{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 .jur-step-light{
-  background:rgba(255,255,255,.05)!important;color:var(--tx-dim)!important;
+  background:rgba(51,33,15,.04)!important;color:var(--tx-dim)!important;
   padding:4px 10px!important;border-radius:100px!important;font-size:9.5px!important;
-  font-weight:500;font-family:'Fira Code',monospace;
+  font-weight:500;font-family:'Fira Code',monospace;white-space:nowrap;
   border:1px solid var(--hair)!important;
   transition:transform var(--d-fast) var(--e-back),background var(--d-fast) var(--e-soft),
              color var(--d-fast) var(--e-soft);
 }
-.jur-step-light:hover{transform:translateY(-2px);background:var(--cyan)!important;color:#04121A!important}
+.jur-step-light:hover{transform:translateY(-2px);background:var(--cyan)!important;color:#F4E7C8!important}
 .pri-stamp{
   display:inline-block;border:1px solid;padding:4px 14px;border-radius:100px;
   font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
 }
 .pri-high{border-color:var(--red)!important;color:var(--red)!important;
-  background:rgba(251,94,94,.12)!important;animation:stamp 2.6s var(--e-soft) infinite}
+  background:rgba(147,49,43,.1)!important;animation:stamp 2.6s var(--e-soft) infinite}
 .pri-normal{border-color:var(--green)!important;color:var(--green)!important;
-  background:rgba(52,211,153,.12)!important}
+  background:rgba(79,124,58,.1)!important}
 
 /* ══ ALERTS ══════════════════════════════════════════════════════════ */
 .alert-high,.alert-normal,.alert-warn{
   border-radius:var(--r-sm)!important;padding:13px 16px!important;margin-top:10px!important;
   font-size:11.5px!important;font-family:'Fira Code',monospace!important;
-  white-space:pre-wrap;line-height:1.7;backdrop-filter:blur(12px);
+  white-space:pre-wrap;line-height:1.7;
   animation:alert-in var(--d) var(--e-out) both;
 }
-.alert-high{background:rgba(251,94,94,.1)!important;border:1px solid rgba(251,94,94,.28)!important;
-  border-left:2px solid var(--red)!important;color:#FFC9C9!important}
-.alert-normal{background:rgba(52,211,153,.1)!important;border:1px solid rgba(52,211,153,.28)!important;
-  border-left:2px solid var(--green)!important;color:#A7F3D8!important}
-.alert-warn{background:rgba(245,165,36,.1)!important;border:1px solid rgba(245,165,36,.28)!important;
-  border-left:2px solid var(--saffron)!important;color:#FFE0AC!important}
+.alert-high{background:rgba(147,49,43,.08)!important;border:1px solid rgba(147,49,43,.3)!important;
+  border-left:2px solid var(--red)!important;color:#7A2822!important}
+.alert-normal{background:rgba(79,124,58,.08)!important;border:1px solid rgba(79,124,58,.3)!important;
+  border-left:2px solid var(--green)!important;color:#3E6230!important}
+.alert-warn{background:rgba(233,162,27,.1)!important;border:1px solid rgba(233,162,27,.35)!important;
+  border-left:2px solid var(--saffron)!important;color:#8A5E0E!important}
 .processing-note{
   border-radius:var(--r-sm)!important;padding:14px!important;font-size:9.5px!important;
   font-family:'Fira Code',monospace!important;color:var(--tx-mute)!important;
@@ -783,30 +826,30 @@ h1,h2,h3,h4{color:var(--tx)!important;font-weight:600!important}
 div[data-testid="column"]:nth-child(1) .scheme-entry{animation-delay:120ms}
 div[data-testid="column"]:nth-child(2) .scheme-entry{animation-delay:200ms}
 div[data-testid="column"]:nth-child(3) .scheme-entry{animation-delay:280ms}
-.scheme-entry:hover{transform:translateY(-6px);border-color:rgba(124,92,255,.4)!important;
-  box-shadow:0 30px 60px -24px rgba(0,0,0,.9)}
+.scheme-entry:hover{transform:translateY(-6px);border-color:rgba(195,83,45,.45)!important;
+  box-shadow:0 24px 50px -20px rgba(51,33,15,.45)}
 .scheme-entry-header{
-  background:linear-gradient(115deg,rgba(124,92,255,.3),rgba(34,211,238,.1))!important;
+  background:linear-gradient(115deg,rgba(195,83,45,.16),rgba(233,162,27,.1))!important;
   padding:12px 14px!important;display:flex;align-items:center;gap:10px;
   border-bottom:1px solid var(--hair);position:relative;overflow:hidden;
 }
 .scheme-entry-header::after{
   content:"";position:absolute;inset:0;width:38%;
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,.2),transparent);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
   transform:translateX(-140%) skewX(-18deg);
   transition:transform 780ms var(--e-soft);
 }
 .scheme-entry:hover .scheme-entry-header::after{transform:translateX(320%) skewX(-18deg)}
 .scheme-central-tag{
-  background:rgba(124,92,255,.1)!important;border:1px solid rgba(124,92,255,.24)!important;
+  background:rgba(195,83,45,.07)!important;border:1px solid rgba(195,83,45,.28)!important;
   border-radius:var(--r-sm)!important;padding:6px 10px!important;font-size:10px!important;
   color:var(--tx-dim)!important;margin-bottom:5px!important;
   transition:transform var(--d-fast) var(--e-soft);
 }
 .scheme-state-tag{
-  background:rgba(245,165,36,.09)!important;border:1px solid rgba(245,165,36,.24)!important;
+  background:rgba(233,162,27,.1)!important;border:1px solid rgba(233,162,27,.35)!important;
   border-radius:var(--r-sm)!important;padding:6px 10px!important;font-size:10px!important;
-  color:#FFE0AC!important;margin-bottom:5px!important;
+  color:var(--tx-dim)!important;margin-bottom:5px!important;
   transition:transform var(--d-fast) var(--e-soft);
 }
 .scheme-entry:hover .scheme-central-tag,.scheme-entry:hover .scheme-state-tag{transform:translateX(4px)}
@@ -816,11 +859,11 @@ div[data-testid="column"]:nth-child(3) .scheme-entry{animation-delay:280ms}
    so the option_menu component iframe blends in seamlessly. A gradient here
    would band against that flat iframe rectangle. */
 section[data-testid="stSidebar"]{
-  background:#0B0D18!important;
+  background:#EFE2C2!important;
   border-right:1px solid var(--hair)!important;
 }
 section[data-testid="stSidebar"]>div{background:transparent!important}
-section[data-testid="stSidebar"] iframe{background:transparent!important;color-scheme:dark}
+section[data-testid="stSidebar"] iframe{background:transparent!important;color-scheme:light}
 section[data-testid="stSidebar"] h1,section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3,section[data-testid="stSidebar"] p,
 section[data-testid="stSidebar"] label,section[data-testid="stSidebar"] .stMarkdown *{
@@ -838,7 +881,7 @@ section[data-testid="stSidebar"] input,section[data-testid="stSidebar"] textarea
   background:conic-gradient(from var(--ring-a),var(--violet),var(--cyan),var(--saffron),var(--violet));
   animation:ring-spin 11s linear infinite;
 }
-.sb-seal::before{content:"";position:absolute;inset:2px;border-radius:50%;background:#0B0E1B}
+.sb-seal::before{content:"";position:absolute;inset:2px;border-radius:50%;background:#F9F0DC}
 .sb-seal span{position:relative;z-index:1}
 .sb-meta{font-family:'Fira Code',monospace;font-size:9.5px;color:var(--tx-mute);
   line-height:2.1;padding-left:4px;letter-spacing:.3px}
@@ -846,21 +889,45 @@ section[data-testid="stSidebar"] input,section[data-testid="stSidebar"] textarea
 .sb-cap{font-size:8.5px;color:var(--tx-mute);text-transform:uppercase;letter-spacing:2px;
   padding-left:4px;margin-bottom:7px;font-weight:700}
 .sb-div{height:1px;background:var(--hair-2);margin:14px -8px}
+.sb-fish{width:110px;margin:22px auto 8px;opacity:.5}
+.sb-fish svg{width:100%;height:auto;display:block}
+
+/* ══ NAV VEIL — one-shot loader on every page change ═════════════════
+   Streamlit reruns are server-side, so the veil rides in ON the incoming
+   page: parchment holds ~.45s over the new render, a terracotta sun-ring
+   spins, then the page resolves underneath. Same one-shot pattern as
+   .enter-veil. */
+.nav-veil{
+  position:fixed;inset:0;z-index:9998;pointer-events:none;
+  background:var(--ink);display:grid;place-items:center;
+  animation:nav-veil-out .55s var(--e-soft) .45s forwards;
+}
+.nav-veil i{
+  width:46px;height:46px;border-radius:50%;position:relative;
+  border:3px solid rgba(195,83,45,.22);border-top-color:var(--violet);
+  animation:nav-spin .8s linear infinite;
+}
+.nav-veil i::after{ /* saffron sun-hub, echoing the splash mandala */
+  content:"";position:absolute;inset:14px;border-radius:50%;
+  background:var(--saffron);opacity:.85;
+}
+@keyframes nav-veil-out{to{opacity:0;visibility:hidden}}
+@keyframes nav-spin{to{transform:rotate(360deg)}}
 
 /* ══ CONTROLS ════════════════════════════════════════════════════════ */
 .stButton>button{
   position:relative;overflow:hidden;
   background:linear-gradient(120deg,var(--violet),var(--violet-dim))!important;
-  color:#fff!important;font-weight:600!important;
+  color:#F7EDD6!important;font-weight:600!important;
   font-family:'Plus Jakarta Sans',sans-serif!important;
-  border:1px solid rgba(255,255,255,.14)!important;border-radius:var(--r-sm)!important;
+  border:1px solid rgba(51,33,15,.3)!important;border-radius:var(--r-sm)!important;
   letter-spacing:.3px!important;padding:11px 18px!important;
-  box-shadow:0 10px 30px -10px rgba(124,92,255,.7);
+  box-shadow:0 10px 26px -10px rgba(147,49,43,.55);
   transition:transform var(--d-fast) var(--e-soft),box-shadow var(--d-fast) var(--e-soft),
              filter var(--d-fast) var(--e-soft)!important;
 }
-.stButton>button:hover{transform:translateY(-2px);filter:brightness(1.14);
-  box-shadow:0 18px 44px -12px rgba(124,92,255,.9)!important}
+.stButton>button:hover{transform:translateY(-2px);filter:brightness(1.08);
+  box-shadow:0 16px 38px -12px rgba(147,49,43,.7)!important}
 .stButton>button:active{transform:translateY(0) scale(.985)}
 .stButton>button::after{
   content:"";position:absolute;top:0;bottom:0;left:0;width:34%;
@@ -878,12 +945,12 @@ section[data-testid="stSidebar"] input,section[data-testid="stSidebar"] textarea
   border-bottom:2px solid transparent!important;border-radius:var(--r-sm) var(--r-sm) 0 0!important;
   transition:color var(--d-fast) var(--e-soft),background var(--d-fast) var(--e-soft)!important;
 }
-.stTabs [data-baseweb="tab"]:hover{color:var(--tx)!important;background:rgba(255,255,255,.04)!important}
+.stTabs [data-baseweb="tab"]:hover{color:var(--tx)!important;background:rgba(51,33,15,.05)!important}
 .stTabs [aria-selected="true"]{color:var(--violet)!important;border-bottom-color:var(--violet)!important;
-  background:rgba(124,92,255,.07)!important}
+  background:rgba(195,83,45,.07)!important}
 
 .stSelectbox>div>div,.stTextArea textarea,.stTextInput input{
-  background:rgba(255,255,255,.045)!important;
+  background:rgba(255,255,255,.5)!important;
   border:1px solid var(--hair)!important;color:var(--tx)!important;
   font-family:'Plus Jakarta Sans',sans-serif!important;font-size:12.5px!important;
   border-radius:var(--r-sm)!important;
@@ -891,21 +958,21 @@ section[data-testid="stSidebar"] input,section[data-testid="stSidebar"] textarea
              background var(--d-fast) var(--e-soft)!important;
 }
 .stSelectbox>div>div:hover,.stTextArea textarea:hover,.stTextInput input:hover{
-  background:rgba(255,255,255,.07)!important;border-color:rgba(255,255,255,.18)!important}
+  background:rgba(255,255,255,.7)!important;border-color:rgba(51,33,15,.3)!important}
 .stSelectbox>div>div:focus-within,.stTextArea textarea:focus,.stTextInput input:focus{
-  border-color:var(--violet)!important;box-shadow:0 0 0 3px rgba(124,92,255,.28)!important}
+  border-color:var(--violet)!important;box-shadow:0 0 0 3px rgba(195,83,45,.22)!important}
 div[data-baseweb="popover"] li{background:var(--surf)!important;color:var(--tx)!important}
-div[data-baseweb="popover"] li:hover{background:rgba(124,92,255,.24)!important}
+div[data-baseweb="popover"] li:hover{background:rgba(195,83,45,.14)!important}
 
 div[data-testid="metric-container"]{
-  background:var(--glass)!important;border:1px solid var(--hair)!important;
+  background:var(--surf)!important;border:1px solid var(--hair)!important;
   border-left:2px solid var(--violet)!important;border-radius:var(--r)!important;
-  padding:16px!important;backdrop-filter:blur(16px);
+  padding:16px!important;
   animation:pop-in 600ms var(--e-back) both;
   transition:transform var(--d) var(--e-soft),box-shadow var(--d) var(--e-soft)!important;
 }
 div[data-testid="metric-container"]:hover{transform:translateY(-4px);
-  box-shadow:0 24px 50px -20px rgba(0,0,0,.9)!important}
+  box-shadow:0 20px 44px -18px rgba(51,33,15,.4)!important}
 [data-testid="metric-container"] label{color:var(--tx-mute)!important;font-size:9px!important;
   text-transform:uppercase!important;letter-spacing:1.8px!important}
 [data-testid="metric-container"] [data-testid="metric-value"]{
@@ -917,48 +984,44 @@ div[data-testid="metric-container"]:hover{transform:translateY(-4px);
   animation:fade-up var(--d-slow) var(--e-out) both;
 }
 .streamlit-expanderHeader,[data-testid="stExpander"] summary{
-  background:var(--glass)!important;border:1px solid var(--hair)!important;
+  background:var(--surf)!important;border:1px solid var(--hair)!important;
   font-family:'Plus Jakarta Sans',sans-serif!important;color:var(--tx-dim)!important;
   border-radius:var(--r-sm)!important;font-size:12px!important;
   transition:background var(--d-fast) var(--e-soft)!important;
 }
 .streamlit-expanderHeader:hover,[data-testid="stExpander"] summary:hover{
-  background:rgba(124,92,255,.14)!important;color:var(--tx)!important}
+  background:rgba(195,83,45,.1)!important;color:var(--tx)!important}
 [data-testid="stExpander"]{border:none!important;background:transparent!important}
-.streamlit-expanderContent{background:var(--glass-2)!important;
+.streamlit-expanderContent{background:var(--surf)!important;
   border:1px solid var(--hair)!important;border-top:none!important}
 .stSpinner>div{border-color:var(--violet) transparent transparent transparent!important}
 .stRadio label{color:var(--tx-dim)!important;font-family:'Plus Jakarta Sans',sans-serif!important}
 .stRadio [role="radiogroup"]{gap:8px}
 [data-testid="stFileUploader"],[data-testid="stFileUploadDropzone"]{
-  background:var(--glass)!important;border:1px dashed var(--hair)!important;
+  background:var(--surf)!important;border:1px dashed rgba(51,33,15,.3)!important;
   border-radius:var(--r)!important;color:var(--tx-dim)!important;
   transition:border-color var(--d) var(--e-soft),background var(--d) var(--e-soft)!important;
 }
 [data-testid="stFileUploadDropzone"]:hover{border-color:var(--violet)!important;
-  background:rgba(124,92,255,.08)!important}
+  background:rgba(195,83,45,.06)!important}
 [data-testid="stPlotlyChart"],[data-testid="stImage"]{
   border-radius:var(--r);overflow:hidden;
   animation:fade-up var(--d-slow) var(--e-out) 160ms both;
 }
 [data-testid="stImage"] img{border-radius:var(--r);border:1px solid var(--hair)}
-[data-testid="stAlert"]{background:var(--glass)!important;border:1px solid var(--hair)!important;
-  border-radius:var(--r-sm)!important;color:var(--tx)!important;backdrop-filter:blur(12px)}
+[data-testid="stAlert"]{background:var(--surf)!important;border:1px solid var(--hair)!important;
+  border-radius:var(--r-sm)!important;color:var(--tx)!important}
 hr{border-color:var(--hair-2)!important}
 
 /* Keyboard focus is never traded away for aesthetics */
 .stButton>button:focus-visible,.stTextInput input:focus-visible,
 .stTextArea textarea:focus-visible,.stTabs [data-baseweb="tab"]:focus-visible,
 [data-testid="stFileUploadDropzone"]:focus-visible{
-  outline:3px solid var(--saffron)!important;outline-offset:3px!important;
+  /* terracotta, not saffron: a focus indicator must clear 3:1 on parchment */
+  outline:3px solid var(--violet)!important;outline-offset:3px!important;
 }
 
 /* ══ KEYFRAMES ═══════════════════════════════════════════════════════ */
-@keyframes aurora{
-  0%  {transform:translate3d(0,0,0) rotate(0deg) scale(1)}
-  50% {transform:translate3d(3%,-2%,0) rotate(4deg) scale(1.09)}
-  100%{transform:translate3d(-3%,2%,0) rotate(-3deg) scale(1.04)}
-}
 @keyframes ken{from{transform:scale(1.02) translate3d(0,0,0)}
                to{transform:scale(1.16) translate3d(-1.6%,-1.6%,0)}}
 @keyframes hero-drift{from{transform:translateY(-3%)}to{transform:translateY(3%)}}
@@ -976,8 +1039,8 @@ hr{border-color:var(--hair-2)!important}
                  100%{transform:translateX(360%) skewX(-18deg)}}
 @keyframes sheen-text{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 @keyframes ring-spin{to{--ring-a:360deg}}
-@keyframes beat{0%,100%{box-shadow:0 0 0 0 rgba(52,211,153,.6)}70%{box-shadow:0 0 0 7px rgba(52,211,153,0)}}
-@keyframes stamp{0%,100%{box-shadow:0 0 0 0 rgba(251,94,94,.4)}70%{box-shadow:0 0 0 8px rgba(251,94,94,0)}}
+@keyframes beat{0%,100%{box-shadow:0 0 0 0 rgba(79,124,58,.55)}70%{box-shadow:0 0 0 7px rgba(79,124,58,0)}}
+@keyframes stamp{0%,100%{box-shadow:0 0 0 0 rgba(147,49,43,.4)}70%{box-shadow:0 0 0 8px rgba(147,49,43,0)}}
 
 /* ══ REDUCED MOTION — hold every end state, drop the movement ═══════ */
 @media (prefers-reduced-motion:reduce){
@@ -987,11 +1050,33 @@ hr{border-color:var(--hair-2)!important}
     scroll-behavior:auto!important;
   }
   [data-testid="stAppViewContainer"]::before,.ngis-hero-bg,.mast-seal,.sb-seal{animation:none!important}
-  .tricolor-strip::after,.reg-ticket-header::after,.stButton>button::after{display:none!important}
+  .tricolor-strip::after,.reg-ticket-header::after,.stButton>button::after,
+  .nav-veil{display:none!important}
   .hero-rule{width:220px!important}
 }
 </style>
 """, unsafe_allow_html=True)
+
+# One-shot arrival veil: the splash's "dip to dark" resolves into the
+# console's own entrance choreography (hero-in / fade-up above). The dip
+# colour is manuscript ink-brown — a page turn, not a cut to black.
+if st.session_state.pop("just_entered", False):
+    st.markdown("""<div class="enter-veil"></div><style>
+    .enter-veil{position:fixed;inset:0;background:#33210F;z-index:9999;pointer-events:none;
+      animation:veil-clear 900ms 120ms cubic-bezier(.16,1,.3,1) forwards}
+    @keyframes veil-clear{from{opacity:1}to{opacity:0;visibility:hidden}}
+    @media (prefers-reduced-motion:reduce){.enter-veil{display:none}}
+    </style>""", unsafe_allow_html=True)
+
+# Corner spirals — the splash's frame ornaments, standing static at the
+# four viewport corners (styling: .ms-corner in the master CSS block).
+_CORNER_STATIC = corner_svg_static()
+st.markdown(
+    f'<div class="ms-corner ms-c-tl ms-motif-static">{_CORNER_STATIC}</div>'
+    f'<div class="ms-corner ms-c-tr ms-motif-static">{_CORNER_STATIC}</div>'
+    f'<div class="ms-corner ms-c-br ms-motif-static">{_CORNER_STATIC}</div>'
+    f'<div class="ms-corner ms-c-bl ms-motif-static">{_CORNER_STATIC}</div>',
+    unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1083,17 +1168,17 @@ with st.sidebar:
       <div style='display:flex;align-items:center;gap:12px'>
         <div class='sb-seal'><span>⚖</span></div>
         <div>
-          <div class='dv' style='font-size:14px;font-weight:600;color:#E7E9F2;line-height:1.2'>बिहार सरकार</div>
-          <div style='font-size:8px;color:#8A90A8;letter-spacing:2.4px;
+          <div class='dv' style='font-size:14px;font-weight:600;color:#33210F;line-height:1.2'>बिहार सरकार</div>
+          <div style='font-size:8px;color:rgba(51,33,15,.58);letter-spacing:2.4px;
                text-transform:uppercase;margin-top:3px;font-weight:700'>Government of Bihar</div>
         </div>
       </div>
-      <div style='margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.055)'>
-        <div style="font-family:'Instrument Serif',serif;font-size:19px;color:#F5A524;
+      <div style='margin-top:14px;padding-top:12px;border-top:1px solid rgba(51,33,15,.09)'>
+        <div style="font-family:'Instrument Serif',serif;font-size:19px;color:#C3532D;
              letter-spacing:.5px;line-height:1">NGIS</div>
-        <div style='font-size:9.5px;color:#A7AECB;letter-spacing:.3px;margin-top:4px;line-height:1.5'>
+        <div style='font-size:9.5px;color:rgba(51,33,15,.78);letter-spacing:.3px;margin-top:4px;line-height:1.5'>
              Nalanda Grievance<br>Intelligence System</div>
-        <div style="font-size:9px;color:#8A90A8;margin-top:6px;
+        <div style="font-size:9px;color:rgba(51,33,15,.58);margin-top:6px;
              font-family:'Fira Code',monospace">Hilsa Sub-Division</div>
       </div>
     </div>""", unsafe_allow_html=True)
@@ -1107,21 +1192,21 @@ with st.sidebar:
         default_index=0,
         styles={
             "container":         {"padding":"0px 4px","background-color":"transparent","backgroundColor":"transparent"},
-            "icon":              {"color":"#F5A524","font-size":"13px"},
-            "nav-link":          {"font-size":"12.5px","color":"#A7AECB",
+            "icon":              {"color":"#C3532D","font-size":"13px"},
+            "nav-link":          {"font-size":"12.5px","color":"#5C4526",
                                   "font-family":"Plus Jakarta Sans, sans-serif",
                                   "font-weight":"600","padding":"11px 14px",
                                   "margin-bottom":"5px","border-radius":"10px",
                                   "letter-spacing":".2px",
-                                  "border":"1px solid rgba(255,255,255,.055)",
-                                  "background-color":"rgba(255,255,255,.03)","backgroundColor":"rgba(255,255,255,.03)",
+                                  "border":"1px solid rgba(51,33,15,.12)",
+                                  "background-color":"rgba(51,33,15,.03)","backgroundColor":"rgba(51,33,15,.03)",
                                   "transition":"all 280ms cubic-bezier(.16,1,.3,1)",
-                                  "--hover-color":"rgba(124,92,255,.22)"},
-            "nav-link-selected": {"background":"linear-gradient(120deg,#7C5CFF,#5B3FD1)",
-                                  "background-color":"#7C5CFF","backgroundColor":"#7C5CFF",
-                                  "color":"#FFFFFF","font-weight":"700",
-                                  "border":"1px solid rgba(255,255,255,.16)",
-                                  "box-shadow":"0 12px 30px -8px rgba(124,92,255,.85)",
+                                  "--hover-color":"rgba(195,83,45,.14)"},
+            "nav-link-selected": {"background":"#C3532D",
+                                  "background-color":"#C3532D","backgroundColor":"#C3532D",
+                                  "color":"#F7EDD6","font-weight":"700",
+                                  "border":"1px solid rgba(51,33,15,.2)",
+                                  "box-shadow":"0 10px 24px -8px rgba(147,49,43,.55)",
                                   "transition":"all 280ms cubic-bezier(.16,1,.3,1)"},
         },
     )
@@ -1134,10 +1219,10 @@ with st.sidebar:
     if raw_key and raw_key.strip():
         st.session_state["gemini_key"] = raw_key.strip()
         active_display = st.session_state.get("_gemini_active", _GEMINI_CHAIN[1])
-        st.markdown(f"<div class='sb-meta' style='color:#34D399'>✓ Key set · {active_display}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='sb-meta' style='color:#4F7C3A'>✓ Key set · {active_display}</div>", unsafe_allow_html=True)
     else:
         st.session_state["gemini_key"] = ""
-        st.markdown("<div class='sb-meta' style='color:#FB5E5E'>⚠ No key — OCR disabled</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sb-meta' style='color:#93312B'>⚠ No key — OCR disabled</div>", unsafe_allow_html=True)
         st.markdown("<div class='sb-meta'>aistudio.google.com/apikey</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='sb-div'></div>", unsafe_allow_html=True)
@@ -1150,9 +1235,23 @@ with st.sidebar:
     now = datetime.now()
     st.markdown(f"<div class='sb-meta'>{now.strftime('%d %b %Y · %H:%M')}<br>जनसंख्या <b>1,97,309</b><br>क्षेत्र <b>140 km²</b><br>ग्राम <b>56</b> · प्रखंड <b>20</b></div>", unsafe_allow_html=True)
 
+    # Madhubani fish watermark — the splash motif, resting under the nav
+    st.markdown(f"<div class='sb-fish ms-motif-static'>{fish_svg_static()}</div>",
+                unsafe_allow_html=True)
+
 fdf = df.copy()
 if gp != "All": fdf = fdf[fdf["Priority"]==gp]
 if gb != "All": fdf = fdf[fdf["Block"]==gb]
+
+# ── NAV VEIL — page-transition loader (presentation only) ─────────────
+# The single sanctioned session_state addition of the re-theme: remember
+# the last page so the veil fires exactly once per page CHANGE — never on
+# first arrival (the enter-veil owns that) and never on same-page reruns
+# (filters, uploads, key entry).
+_prev_page = st.session_state.get("_last_page")
+st.session_state["_last_page"] = selected
+if _prev_page is not None and _prev_page != selected:
+    st.markdown('<div class="nav-veil"><i></i></div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1183,9 +1282,9 @@ if selected == "Today's Brief":
     <div class="brief-card">
       <strong>सिस्टम विवरण (System Brief) —</strong>
       कुल {total_len} शिकायतें · आज {today_n} प्राप्त ·
-      सर्वाधिक: <strong style="color:#7C5CFF">{_html.escape(top_block)}</strong> ·
-      प्रमुख श्रेणी: <strong style="color:#22D3EE">{_html.escape(top_cat)}</strong> ·
-      {high_n} अत्यावश्यक · निराकरण दर <strong style="color:#34D399">{res_rate}%</strong>
+      सर्वाधिक: <strong style="color:#C3532D">{_html.escape(top_block)}</strong> ·
+      प्रमुख श्रेणी: <strong style="color:#2C4B8F">{_html.escape(top_cat)}</strong> ·
+      {high_n} अत्यावश्यक · निराकरण दर <strong style="color:#4F7C3A">{res_rate}%</strong>
     </div>""", unsafe_allow_html=True)
 
     # ── Count-up choreography ──────────────────────────────────────────
@@ -1252,7 +1351,7 @@ if selected == "Today's Brief":
             f'<td style="font-family:Fira Code,monospace;color:{NAVY};font-weight:600;text-align:center">{_html.escape(str(row["ID"]))}</td>'
             f'<td style="font-family:Fira Code,monospace;font-size:11px">{_html.escape(str(row["Date"]))}</td>'
             f'<td style="color:{TXT};font-weight:500">{cat_short}</td>'
-            f'<td style="color:#8A90A8;font-size:10.5px">{dept_short}</td>'
+            f'<td style="color:rgba(51,33,15,.58);font-size:10.5px">{dept_short}</td>'
             f'<td style="color:{TXT}">{block_esc}</td>'
             f'<td><span class="{pri_cls}">{pri_sym} {row["Priority"]}</span></td>'
             f'<td class="{age_cls}">{row["Days_Open"]}d</td>'
@@ -1314,13 +1413,27 @@ elif selected == "Analytics Suite":
         ).reset_index()
         
         # The original used mapbox_style="white-bg" specifically to avoid
-        # fetching basemap tiles. A hosted dark style would undo that, so this
-        # is an inline Mapbox style spec with an empty `sources` block: still
-        # zero network requests, but the canvas is dark instead of white.
-        _dark_canvas = {
-            "version": 8, "sources": {},
-            "layers": [{"id": "bg", "type": "background",
-                        "paint": {"background-color": "#0B0E1B"}}],
+        # fetching basemap tiles. This inline Mapbox style spec keeps that
+        # zero-network property but paints the canvas parchment so the map
+        # sits in the manuscript page rather than on a white slab.
+        #
+        # `sources` must be present AND non-empty. Streamlit's frontend strips
+        # empty objects out of the figure spec, so a bare {} reaches mapbox-gl
+        # as a missing key and fails style validation ("missing required
+        # property sources"), which Plotly rethrows as an unexplained
+        # "Mapbox error." in the console. This geojson source is inline, is
+        # referenced by no layer, and fetches nothing, so it satisfies the
+        # validator without giving up the no-tiles property.
+        _parchment_canvas = {
+            "version": 8,
+            "sources": {
+                "ngis-blank": {
+                    "type": "geojson",
+                    "data": {"type": "FeatureCollection", "features": []},
+                }
+            },
+            "layers": [{"id": "ngis-parchment-bg", "type": "background",
+                        "paint": {"background-color": "#EAD7AE"}}],
         }
         fig = px.choropleth_mapbox(
             agg_df,
@@ -1328,21 +1441,21 @@ elif selected == "Analytics Suite":
             locations="Block",
             featureidkey="properties.Block",
             color="High_Priority",
-            color_continuous_scale=[[0, "#1E2140"], [0.5, "#7C5CFF"], [1, "#FB5E5E"]],
+            color_continuous_scale=[[0, "#F2E4BF"], [0.5, "#C3532D"], [1, "#7A2822"]],
             mapbox_style="white-bg", # Hides underlying base map tiles for a clean look
             zoom=9.5,
             center={"lat": 25.25, "lon": 85.35},
             hover_name="Block",
             hover_data={"Total_Reports": True, "High_Priority": True},
         )
-        fig.update_traces(marker_line_color="rgba(255,255,255,.28)", marker_line_width=1)
+        fig.update_traces(marker_line_color="rgba(51,33,15,.45)", marker_line_width=1)
         fig.update_layout(
             margin={"r":0,"t":0,"l":0,"b":0},
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
-            mapbox_style=_dark_canvas,
+            mapbox_style=_parchment_canvas,
             font=dict(color=MUTED, family="'Plus Jakarta Sans', sans-serif", size=11),
-            hoverlabel=dict(bgcolor="#161A2E", bordercolor=NAVY,
+            hoverlabel=dict(bgcolor="#F9F0DC", bordercolor=NAVY,
                             font=dict(color=WHITE, family="'Fira Code', monospace")),
             coloraxis_colorbar=dict(
                 title=dict(text="High<br>Priority", font=dict(color=MUTED, size=9)),
@@ -1352,7 +1465,7 @@ elif selected == "Analytics Suite":
             dragmode=False # Disables panning and zooming to make it "static"
         )
         
-        st.markdown("<p style='color:#8A90A8;font-size:12px;margin-bottom:12px'>Click a political boundary to drill into its grievances.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:rgba(51,33,15,.58);font-size:12px;margin-bottom:12px'>Click a political boundary to drill into its grievances.</p>", unsafe_allow_html=True)
         
         # We use on_select to capture clicks
         selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
@@ -1526,14 +1639,14 @@ elif selected == "Field Capture":
 
             # Schemes
             schemes_html = "".join(
-                f'<div style="background:rgba(124,92,255,.1);border:1px solid rgba(124,92,255,.24);border-radius:8px;'
-                f'padding:6px 10px;font-size:10.5px;color:#C9C4FF;margin-bottom:4px">'
+                f'<div style="background:rgba(195,83,45,.07);border:1px solid rgba(195,83,45,.28);border-radius:8px;'
+                f'padding:6px 10px;font-size:10.5px;color:rgba(51,33,15,.78);margin-bottom:4px">'
                 f'<strong>केंद्रीय:</strong> {_html.escape(str(s))}</div>'
                 for s in clf.get("central_schemes",[])
             )
             schemes_html += "".join(
-                f'<div style="background:rgba(245,165,36,.09);border:1px solid rgba(245,165,36,.24);border-radius:8px;'
-                f'padding:6px 10px;font-size:10.5px;color:#FFE0AC;margin-bottom:4px">'
+                f'<div style="background:rgba(233,162,27,.1);border:1px solid rgba(233,162,27,.35);border-radius:8px;'
+                f'padding:6px 10px;font-size:10.5px;color:rgba(51,33,15,.78);margin-bottom:4px">'
                 f'<strong>बिहार:</strong> {_html.escape(str(s))}</div>'
                 for s in clf.get("bihar_schemes",[])
             )
@@ -1543,9 +1656,9 @@ elif selected == "Field Capture":
                 st.markdown('<div class="sec-label">मूल पाठ · OCR Transcription</div>', unsafe_allow_html=True)
                 with st.expander("▼ पूर्ण हिंदी पाठ देखें · View full Hindi transcription"):
                     st.markdown(
-                        f'<div class="dv" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);'
+                        f'<div class="dv" style="background:rgba(51,33,15,.04);border:1px solid rgba(51,33,15,.16);'
                         f'border-radius:10px;padding:16px 18px;'
-                        f'font-size:14px;color:#E7E9F2;line-height:2;white-space:pre-wrap">'
+                        f'font-size:14px;color:#33210F;line-height:2;white-space:pre-wrap">'
                         f'{_html.escape(str(ocr["transcription"]))}</div>',
                         unsafe_allow_html=True
                     )
@@ -1591,11 +1704,11 @@ elif selected == "Field Capture":
   <div class="section-hdr">प्रेषण · Forwarding Officers (प्रथम: {first_prashan})</div>
   <div class="prashan-row">{prashan_html}</div>
   <div class="section-hdr">न्यायाधिकार क्षेत्र · Jurisdiction Chain</div>
-  <div style="border:1px solid rgba(255,255,255,.055);padding:12px">
+  <div style="border:1px solid rgba(51,33,15,.09);padding:12px">
     <div class="jur-chain-light">{jur_html}</div>
   </div>
   <div class="section-hdr">संबंधित योजनाएं · Applicable Schemes</div>
-  <div style="border:1px solid rgba(255,255,255,.055);padding:12px">{schemes_html}</div>
+  <div style="border:1px solid rgba(51,33,15,.09);padding:12px">{schemes_html}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1627,12 +1740,12 @@ elif selected == "Field Capture":
 
         else:
             st.markdown("""
-            <div class="brief-card" style="text-align:center;padding:72px 20px;border-left:1px solid rgba(255,255,255,.09)">
+            <div class="brief-card" style="text-align:center;padding:72px 20px;border-left:1px solid rgba(51,33,15,.16)">
               <div style="font-size:44px;margin-bottom:14px;opacity:.5">📋</div>
-              <div class="dv" style="font-size:17px;font-weight:600;color:#E7E9F2;margin-bottom:8px">
+              <div class="dv" style="font-size:17px;font-weight:600;color:#33210F;margin-bottom:8px">
                 जनता दरबार शिकायत पत्रावली
               </div>
-              <div style="font-size:12px;color:#8A90A8">Upload a HEIC/JPG/PNG letter image or paste text on the left</div>
+              <div style="font-size:12px;color:rgba(51,33,15,.58)">Upload a HEIC/JPG/PNG letter image or paste text on the left</div>
             </div>""", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1680,15 +1793,15 @@ elif selected == "Scheme Intelligence":
   <div class="scheme-entry-header">
     <span style="font-size:20px">{icon_esc}</span>
     <div>
-      <div style="color:#E7E9F2;font-weight:700;font-size:12.5px">{cat_short}</div>
-      <div style="color:#8A90A8;font-size:9px;font-family:'Fira Code',monospace;margin-top:2px">{dept_short}</div>
+      <div style="color:#33210F;font-weight:700;font-size:12.5px">{cat_short}</div>
+      <div style="color:rgba(51,33,15,.58);font-size:9px;font-family:'Fira Code',monospace;margin-top:2px">{dept_short}</div>
     </div>
   </div>
   <div style="padding:10px 12px">
     {c_html}{s_html}
-    <div style="margin-top:8px;font-size:8.5px;color:#8A90A8;text-transform:uppercase;letter-spacing:1.8px;font-weight:700;margin-bottom:6px">प्रेषण · Forwarding</div>
+    <div style="margin-top:8px;font-size:8.5px;color:rgba(51,33,15,.58);text-transform:uppercase;letter-spacing:1.8px;font-weight:700;margin-bottom:6px">प्रेषण · Forwarding</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">{prashan_boxes}</div>
-    <div style="font-size:8.5px;color:#8A90A8;text-transform:uppercase;letter-spacing:1.8px;font-weight:700;margin-bottom:6px">न्यायाधिकार · Jurisdiction</div>
+    <div style="font-size:8.5px;color:rgba(51,33,15,.58);text-transform:uppercase;letter-spacing:1.8px;font-weight:700;margin-bottom:6px">न्यायाधिकार · Jurisdiction</div>
     <div style="line-height:2;font-size:10px">{jur_html}</div>
   </div>
 </div>""", unsafe_allow_html=True)

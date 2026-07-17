@@ -7,8 +7,8 @@
 # matter what the stylesheet says. secondaryBackgroundColor is matched to the
 # sidebar surface so the nav iframe blends invisibly.
 [theme]
-base                     = "dark"
-primaryColor             = "#7C5CFF"  # UX4G violet, lifted for dark surfaces
-backgroundColor          = "#07080F"
-secondaryBackgroundColor = "#0B0D18"  # == sidebar surface; see note above
-textColor                = "#E7E9F2"
+base                     = "light"
+primaryColor             = "#C3532D"  # Madhubani terracotta (heritage palette)
+backgroundColor          = "#F4E7C8"  # parchment — matches splash canvas
+secondaryBackgroundColor = "#EFE2C2"  # == sidebar surface; see note above
+textColor                = "#33210F"
