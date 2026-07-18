@@ -10,24 +10,17 @@ NGIS is a Streamlit dashboard that ingests citizen grievances (in Hindi and Engl
 
 ## What it does
 
-- **Bilingual complaint classification** (`classifier.py`) — free-text grievances (Hindi, English, or mixed) are run through a hand-tuned keyword-scoring engine (no external NLP/ML dependency): each candidate category has a `{keyword: weight}` dict (weights 1–3), multi-word keyword matches get a 1.5× bonus, and the category with the highest cumulative score wins. Confidence is normalized as `score / (sum of top-3 keyword weights × 1.5)`, capped at 1.0. Ties/no-matches fall back to `Other / Anya`.
-- **Scheme & jurisdiction mapping** — each of the 9 substantive categories (Water/Jal, Roads/Sadak, Ration/PDS, Land/Bhumi, Health/Swasthya, Electricity/Bijli, Education/Shiksha, MGNREGA/Rozgar, Pension/Samajik Suraksha) carries its own `department`, an `->`-chained `jurisdiction` escalation path (e.g. Ward Committee → Panchayat Secretary → Junior Engineer), plus lists of applicable `central_schemes` and `bihar_schemes`.
-- **Priority detection** — a separate `priority_keywords` list per category (e.g. "गंभीर", "emergency", "दुर्घटना", "months pending") flags a grievance `High` priority via simple substring matching against the lower-cased complaint text.
-- **Entity extraction** — regex-based helpers pull structured fields out of raw grievance text:
-  - `_extract_block()` — matches against `BLOCK_MAPPING`, a bilingual (Devanagari/Latin) alias table for all 20 Nalanda blocks.
-  - `_extract_village()` — Hindi/English patterns (`ग्राम`, `गाँव`, `village:` …).
-  - `_extract_name()` — Hindi patterns (`मेरा नाम`, `श्री/श्रीमती`) and English (`I am` / `My name is`).
-  - `_extract_date()` — `dd/mm/yyyy`-style and Hindi month-name dates, defaulting to today if none found.
-- **Reference/demographic data layer** (`real_data.py`) — static, hand-compiled dictionaries per block (all 20 blocks) covering:
-  - `BLOCK_CENSUS` — population, literacy %, sex ratio, child sex ratio, SC %, rural %, households.
-  - `JJM_COVERAGE` — Jal Jeevan Mission tap-water coverage/functional % and villages covered vs. total.
-  - `MGNREGA_DATA` — average wage-payment delay (days), job cards issued, active workers, pending wages (₹ lakh), scheme completion %.
-  - `HILSA_STATS` / `BENCHMARKS` — a detailed profile for the Hilsa block plus literacy/sex-ratio/JJM/MGNREGA benchmark comparisons against Nalanda, Bihar, and national averages.
-  - `get_blocks_df()` merges all of the above into a single `pandas.DataFrame`, one row per block, for use in the dashboard's charts and tables.
-- **Block coordinates** (`fetch_coords.py`) — a one-off/offline utility script using `geopy`'s `Nominatim` geocoder to resolve each block name (with `", Nalanda, Bihar, India"` appended, `", Nawada, Bihar, India"` for the Warisaliganj special case) to lat/lon, written out to `block_coords.json`. Not run at app startup — `block_coords.json` is committed and read directly by `app.py`.
-- **GIS visualization** — an interactive Plotly/Mapbox map plots block-level metrics against `hilsa_boundaries.geojson`, using the pre-fetched `block_coords.json` for point placement.
-- **Image handling** (`image_loader.py`) — `get_base64_image()` (Streamlit-cached) inlines local JPEGs from `img/` as base64 data URIs for CSS `background-image`; `hero_css_bg()` prefers a local file (`nalanda_ruins`, `nalanda_monument`) and falls back to a curated set of remote Unsplash/CDN URLs (e.g. `rajgir`, `pawapuri`, `mithila_art`) keyed by name, with a generic default image if the key is unrecognized.
-- **Heritage UI** — a two-act experience: a one-time animated Madhubani/Mithila-style splash screen (`splash.py`, pure-CSS/SVG animation, no JS) gated by `session_state["entered"]`, which hands off into a "Manuscript Console" parchment-themed dashboard (master CSS block in `app.py`). Full token values, motion contract, and accessibility/contrast rules are documented in [`DESIGN.md`](DESIGN.md).
+NGIS helps officials in Nalanda district handle citizen complaints more easily. People can write in a problem — a broken handpump, a pothole, a stopped pension, a ration card issue — in Hindi, English, or a mix of both. The system reads it, figures out what kind of problem it is, and tells you which department and official should handle it, plus the relevant government scheme. Complaints that sound urgent (accidents, contamination, emergencies, months-long delays) get flagged automatically. It also pulls out details like block, village, name, and date straight from the text, and shows district-wide patterns on an interactive map using real demographic and scheme-coverage data for each block.
+
+The whole app is wrapped in a Madhubani/Mithila folk-art-inspired design — an animated splash screen leads into a parchment-styled dashboard, documented in [`DESIGN.md`](DESIGN.md).
+
+**In short:**
+- Reads Hindi/English complaints and sorts them into the right category automatically
+- Points to the responsible department, official, and government scheme
+- Flags urgent complaints as high priority
+- Pulls out block, village, name, and date from the complaint text
+- Maps block-level stats — literacy, water coverage, MGNREGA delays — for the whole district
+- Wrapped in an animated, heritage-art-inspired design
 
 ## Tech stack
 
@@ -118,7 +111,3 @@ The visual language — a Madhubani/Mithila-inspired splash screen transitioning
 ## Contributing
 
 Issues and pull requests are welcome. If you're an AI coding agent, check [`AGENTS.md`](AGENTS.md) for repo-specific conventions before making changes.
-
-## License
-
-No license file is currently published in this repository. Contact the repository owner ([AA3111s](https://github.com/AA3111s)) for reuse permissions.
