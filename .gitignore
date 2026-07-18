@@ -1,8 +1,12 @@
 venv/
+.venv/
 __pycache__/
+cache/
 better-bar/
 .claude/
 .agents/
 .kilocode/
-.venv/
-cache/
+skills-lock.json
+.DS_Store
+**/.DS_Store
+logs-*.txt
