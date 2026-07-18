@@ -1491,6 +1491,70 @@ elif selected == "Analytics Suite":
     else:
         st.info("No reports found for Hilsa sub-division.")
 
+    # ── Sankey: Block → Department → Status ────────────────────────────
+    st.markdown('<div class="ngis-hr"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-label">प्रवाह विश्लेषण · Grievance Flow — Block → Department → Status</div>', unsafe_allow_html=True)
+
+    flow_df = fdf.copy()
+    if flow_df.empty:
+        st.info("No grievances match the current filters.")
+    else:
+        # Short department label (drop the parenthetical acronym)
+        flow_df = flow_df.assign(Dept=flow_df["Department"].str.split("(").str[0].str.strip())
+
+        blocks_list = sorted(flow_df["Block"].unique().tolist())
+        depts_list  = sorted(flow_df["Dept"].unique().tolist())
+        status_order = ["Resolved", "In Progress", "Open"]
+        status_list = [s for s in status_order if s in set(flow_df["Status"])]
+
+        n_b, n_d = len(blocks_list), len(depts_list)
+        # Group offsets keep indices distinct even if a block and a department
+        # share a name (a name→index dict would collapse them).
+        block_idx  = {b: i             for i, b in enumerate(blocks_list)}
+        dept_idx   = {d: n_b + i        for i, d in enumerate(depts_list)}
+        status_idx = {s: n_b + n_d + i  for i, s in enumerate(status_list)}
+        labels = blocks_list + depts_list + status_list
+
+        bd = flow_df.groupby(["Block", "Dept"]).size().reset_index(name="v")
+        ds = flow_df.groupby(["Dept", "Status"]).size().reset_index(name="v")
+
+        src = [block_idx[r.Block] for r in bd.itertuples()] + \
+              [dept_idx[r.Dept]   for r in ds.itertuples()]
+        tgt = [dept_idx[r.Dept]   for r in bd.itertuples()] + \
+              [status_idx[r.Status] for r in ds.itertuples()]
+        val = bd["v"].tolist() + ds["v"].tolist()
+
+        _status_node = {"Resolved": "#4F7C3A", "In Progress": "#E9A21B", "Open": "#93312B"}
+        _status_link = {"Resolved": "rgba(79,124,58,.32)",
+                        "In Progress": "rgba(233,162,27,.34)",
+                        "Open": "rgba(147,49,43,.32)"}
+        node_colors = (["#2C4B8F"] * n_b            # blocks — indigo
+                       + ["#C3532D"] * n_d          # departments — terracotta
+                       + [_status_node[s] for s in status_list])
+        link_colors = (["rgba(44,75,143,.20)"] * len(bd)       # block→dept, indigo tint
+                       + [_status_link[r.Status] for r in ds.itertuples()])  # dept→status, by outcome
+
+        sankey = go.Figure(go.Sankey(
+            arrangement="snap",
+            node=dict(
+                label=labels, color=node_colors,
+                pad=16, thickness=16,
+                line=dict(color="rgba(51,33,15,.35)", width=.6),
+                hovertemplate="%{label} · %{value} grievances<extra></extra>",
+            ),
+            link=dict(
+                source=src, target=tgt, value=val, color=link_colors,
+                hovertemplate="%{source.label} → %{target.label}: %{value}<extra></extra>",
+            ),
+        ))
+        sankey.update_layout(
+            height=max(430, n_b * 30),
+            margin=dict(t=10, b=10, l=8, r=8),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#33210F", family="'Plus Jakarta Sans', sans-serif", size=11),
+        )
+        st.plotly_chart(sankey, use_container_width=True, config={"displayModeBar": False})
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 
